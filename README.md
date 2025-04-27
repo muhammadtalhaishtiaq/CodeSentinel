@@ -1,6 +1,9 @@
 # CodeSentinel
 
 A modern code security analysis platform built with MERN stack (MongoDB, Express, React, Node.js).
+## Project info
+
+# Guarding Your Code with Intelligent Precision
 
 ## Project Structure
 
@@ -207,9 +210,7 @@ For production deployment:
 
 [MIT License](LICENSE)
 
-## Project info
 
-# Guarding Your Code with Intelligent Precision
 
 ## How can I run this project locally?
 If you want to work locally using your own IDE, you can clone this repo and push changes.

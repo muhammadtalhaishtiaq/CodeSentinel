@@ -1,6 +1,84 @@
 # CodeSentinel
 
-A security analysis platform for your codebase with a complete authentication system.
+A modern code security analysis platform built with MERN stack (MongoDB, Express, React, Node.js).
+
+## Project Structure
+
+```
+CodeSentinel/
+├── server/           # Backend code
+│   └── src/
+│       ├── config/   # Database configuration
+│       ├── controllers/ # API controllers
+│       ├── middleware/ # Express middleware
+│       ├── models/   # Mongoose models
+│       ├── routes/   # API routes
+│       ├── scripts/  # Database scripts
+│       └── utils/    # Utility functions
+├── src/              # Frontend code
+│   ├── components/   # React components
+│   ├── hooks/        # Custom React hooks
+│   ├── lib/          # Utility libraries
+│   ├── pages/        # Page components
+│   └── App.tsx       # Main app component
+├── public/           # Static assets
+└── .env              # Environment variables
+```
+
+## Prerequisites
+
+- Node.js (v14 or higher)
+- MongoDB (v4.4 or higher)
+
+## Quick Start
+
+1. **Install dependencies**
+
+```bash
+npm install
+```
+
+2. **Initialize the database**
+
+```bash
+npm run init-db
+```
+
+3. **Start the development server**
+
+```bash
+npm run dev
+```
+
+This will start both the backend and frontend on http://localhost:8080.
+
+## Production Build
+
+```bash
+npm run build
+npm start
+```
+
+## Available Scripts
+
+- `npm run dev` - Start development server with hot reloading
+- `npm run build` - Build the frontend for production
+- `npm run start` - Start production server
+- `npm run init-db` - Initialize MongoDB database
+- `npm run lint` - Run linter
+
+## API Endpoints
+
+### Authentication
+- `POST /api/auth/register` - Register a new user
+- `POST /api/auth/login` - Login a user
+- `GET /api/auth/me` - Get current user
+- `POST /api/auth/forgotpassword` - Request password reset
+- `PUT /api/auth/resetpassword/:resettoken` - Reset password
+
+## License
+
+MIT
 
 ## Features
 
@@ -10,11 +88,6 @@ A security analysis platform for your codebase with a complete authentication sy
 - Protected routes for authenticated users
 - User-friendly form validation
 - Dashboard for security analysis
-
-## Project Structure
-
-- `/src` - Frontend React application
-- `/server` - Backend Node.js/Express server
 
 ## Getting Started
 
@@ -118,16 +191,6 @@ The frontend will run on http://localhost:5173.
    - Enter your email
    - Check your email for a reset link
    - Follow the link to reset your password
-
-## API Endpoints
-
-### Authentication
-
-- **Register**: `POST /api/auth/register`
-- **Login**: `POST /api/auth/login`
-- **Get Current User**: `GET /api/auth/me`
-- **Forgot Password**: `POST /api/auth/forgotpassword`
-- **Reset Password**: `PUT /api/auth/resetpassword/:resettoken`
 
 ## Production Deployment
 

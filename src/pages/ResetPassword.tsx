@@ -48,7 +48,7 @@ const ResetPassword = () => {
     setSuccess('');
 
     try {
-      const response = await fetch(`http://localhost:8080/api/auth/resetpassword/${resettoken}`, {
+      const response = await fetch(`/api/auth/resetpassword/${resettoken}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

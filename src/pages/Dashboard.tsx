@@ -45,12 +45,12 @@ const Dashboard = () => {
   return (
     <SidebarProvider>
       <div className="flex h-screen bg-gray-50">
-        <ResizablePanelGroup direction="horizontal">
-          {/* <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
+        {/* <ResizablePanelGroup direction="horizontal"> */}
+          {/* <ResizablePanel defaultSize={20} minSize={15} maxSize={30}> */}
             <Sidebar />
-          </ResizablePanel>
-          <ResizableHandle withHandle /> */}
-          <ResizablePanel defaultSize={80}>
+          {/* </ResizablePanel> */}
+          {/* <ResizableHandle withHandle /> */}
+          {/* <ResizablePanel defaultSize={80}> */}
             <div className="flex-1 flex flex-col overflow-hidden">
               <Header />
               <main className="flex-1 overflow-y-auto p-6">
@@ -142,8 +142,8 @@ const Dashboard = () => {
                 </div>
               </main>
             </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
+          {/* </ResizablePanel> */}
+        {/* </ResizablePanelGroup> */}
       </div>
     </SidebarProvider>
   );

@@ -2,12 +2,11 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const path = require('path');
-const { createServer: createViteServer } = require('vite');
 const { connectDB } = require('./config/db');
 const errorHandler = require('./middleware/error');
 
 // Load environment variables
-dotenv.config();
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 // Connect to database
 connectDB();
@@ -15,74 +14,70 @@ connectDB();
 // Route files
 const authRoutes = require('./routes/auth');
 
-const startServer = async() => {
-    const app = express();
+const app = express();
 
-    // Body parser
-    app.use(express.json());
+// Body parser
+app.use(express.json());
 
-    // Enable CORS
-    app.use(cors());
+// Enable CORS
+app.use(cors());
 
-    // API routes
-    app.use('/api/auth', authRoutes);
+// API routes
+app.use('/api/auth', authRoutes);
 
-    // In development, use Vite for hot module replacement
-    if (process.env.NODE_ENV !== 'production') {
-        // Create Vite server in middleware mode
-        const vite = await createViteServer({
-            server: { middlewareMode: true },
-            appType: 'spa',
-            root: path.resolve(__dirname, '../..')
-        });
+// Determine if we're in development mode
+const isDevelopment = process.env.NODE_ENV === 'development';
 
-        // Use Vite's connect instance as middleware
-        app.use(vite.middlewares);
+if (isDevelopment) {
+    // In development mode, we'll use Vite's dev server
+    const { createServer: createViteServer } = require('vite');
 
-        app.get('*', async(req, res, next) => {
-            try {
-                // Serve index.html when not an API request
-                if (!req.url.startsWith('/api/')) {
-                    const template = await vite.transformIndexHtml(
-                        req.originalUrl,
-                        await vite.ssrLoadModule(path.resolve(__dirname, '../../index.html'))
-                    );
-                    res.status(200).set({ 'Content-Type': 'text/html' }).end(template);
-                } else {
-                    next();
-                }
-            } catch (e) {
-                vite.ssrFixStacktrace(e);
-                console.error(e);
-                next(e);
-            }
-        });
-    } else {
-        // In production, serve the built frontend
-        app.use(express.static(path.join(__dirname, '../../dist')));
+    const setupVite = async() => {
+        try {
+            // Create Vite server
+            const vite = await createViteServer({
+                server: { middlewareMode: true },
+                appType: 'spa',
+                root: path.resolve(__dirname, '../../')
+            });
 
-        // Any route not handled by API should be handled by React
-        app.get('*', (req, res) => {
+            // Use Vite's connect middleware
+            app.use(vite.middlewares);
+
+            console.log('Vite middleware enabled for development');
+        } catch (error) {
+            console.error('Failed to initialize Vite middleware:', error);
+            process.exit(1);
+        }
+    };
+
+    setupVite();
+} else {
+    // In production, serve static files from the build directory
+    app.use(express.static(path.join(__dirname, '../../dist')));
+
+    // For any other request, send the React app
+    app.get('*', (req, res) => {
+        if (!req.path.startsWith('/api/')) {
             res.sendFile(path.resolve(__dirname, '../../dist', 'index.html'));
-        });
-    }
-
-    // Error handler middleware
-    app.use(errorHandler);
-
-    const PORT = process.env.PORT || 5000;
-
-    const server = app.listen(PORT, () => {
-        console.log(`Server running on port ${PORT}`);
-        console.log(`Frontend available at http://localhost:${PORT}`);
+        }
     });
+}
 
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (err) => {
-        console.log(`Error: ${err.message}`);
-        // Close server & exit process
-        server.close(() => process.exit(1));
-    });
-};
+// Error handler middleware
+app.use(errorHandler);
 
-startServer();
+const PORT = process.env.PORT || 8080;
+
+const server = app.listen(PORT, () => {
+    console.log(`Server running in ${process.env.NODE_ENV || 'production'} mode on port ${PORT}`);
+    console.log(`API available at http://localhost:${PORT}/api`);
+    console.log(`Frontend available at http://localhost:${PORT}`);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (err) => {
+    console.log(`Error: ${err.message}`);
+    // Close server & exit process
+    server.close(() => process.exit(1));
+});

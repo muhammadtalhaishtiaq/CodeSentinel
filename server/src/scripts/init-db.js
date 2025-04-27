@@ -3,7 +3,8 @@
  * Run with: node src/scripts/init-db.js
  */
 
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
 const mongoose = require('mongoose');
 
 // Connect to MongoDB

@@ -11,19 +11,22 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
 
   useEffect(() => {
     // Check if user is authenticated
-    const token = localStorage.getItem('token');
-    if (!token) {
-      setIsAuthenticated(false);
-      return;
-    }
-
-    // Verify token with backend
-    const verifyToken = async () => {
+    const checkAuth = async () => {
       try {
-        const response = await fetch('http://localhost:8080/api/auth/me', {
+        // Get token from local storage
+        const token = localStorage.getItem('token');
+        
+        if (!token) {
+          setIsAuthenticated(false);
+          setIsLoading(false);
+          return;
+        }
+        
+        // Verify token is valid by calling the API
+        const response = await fetch('/api/auth/me', {
           headers: {
-            Authorization: `Bearer ${token}`,
-          },
+            Authorization: `Bearer ${token}`
+          }
         });
 
         if (response.ok) {
@@ -40,7 +43,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children }) => {
       }
     };
 
-    verifyToken();
+    checkAuth();
   }, []);
 
   // Show nothing while checking authentication

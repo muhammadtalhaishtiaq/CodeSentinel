@@ -2,6 +2,7 @@ const User = require('../models/User');
 const { generateToken } = require('../utils/jwtUtils');
 const sendEmail = require('../utils/emailUtils');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 
 // @desc    Register user
 // @route   POST /api/auth/register
@@ -213,6 +214,141 @@ exports.resetPassword = async(req, res, next) => {
             message: 'Password updated successfully'
         });
     } catch (error) {
+        next(error);
+    }
+};
+
+// @desc    Update user profile
+// @route   PUT /api/auth/update-profile
+// @access  Private
+exports.updateProfile = async(req, res, next) => {
+    try {
+        console.log('Update profile request received for user ID:', req.user._id);
+        const { firstName, lastName, currentPassword, newPassword } = req.body;
+        console.log('Update fields:', { firstName, lastName, hasCurrentPassword: !!currentPassword, hasNewPassword: !!newPassword });
+
+        // For additional security, re-fetch the user with password
+        const user = await User.findById(req.user._id).select('+password');
+
+        if (!user) {
+            console.error('User not found in updateProfile:', req.user._id);
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        console.log('User found for update:', user.email);
+        console.log('User has updateAndHashPassword method:', typeof user.updateAndHashPassword === 'function');
+
+        // Update basic fields
+        user.firstName = firstName;
+        user.lastName = lastName;
+
+        // Handle password update separately
+        let passwordUpdated = false;
+
+        // Check if password update is requested
+        if (currentPassword && newPassword) {
+            console.log('Password update requested');
+
+            // Verify current password
+            try {
+                console.log('Verifying current password');
+                const isMatch = await user.matchPassword(currentPassword);
+                console.log('Password match result:', isMatch);
+
+                if (!isMatch) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Current password is incorrect'
+                    });
+                }
+
+                // We'll save name fields first, then handle password separately
+                passwordUpdated = true;
+            } catch (error) {
+                console.error('Password verification error:', error);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Error verifying password'
+                });
+            }
+        }
+
+        // Save the basic user info first
+        console.log('Saving updated user info (without password changes)');
+        await user.save();
+
+        // Now handle password update if needed
+        if (passwordUpdated) {
+            try {
+                console.log('Now updating password separately');
+                // Manual fallback if method is missing
+                if (typeof user.updateAndHashPassword !== 'function') {
+                    console.log('updateAndHashPassword method not found, using direct approach');
+                    user.password = newPassword;
+                    user.markModified('password');
+                    await user.save();
+                } else {
+                    // Use our special method to ensure the password is marked as modified
+                    await user.updateAndHashPassword(newPassword);
+                }
+                console.log('Password updated and hashed');
+            } catch (error) {
+                console.error('Error updating password:', error);
+                return res.status(500).json({
+                    success: false,
+                    message: 'Failed to update password'
+                });
+            }
+        }
+
+        // IMPORTANT: Never return the password in the response
+        res.status(200).json({
+            success: true,
+            message: passwordUpdated ? 'Profile and password updated successfully' : 'Profile updated successfully',
+            user: {
+                id: user._id,
+                firstName: user.firstName,
+                lastName: user.lastName,
+                email: user.email
+            }
+        });
+    } catch (error) {
+        console.error('Profile update error:', error.message);
+        console.error(error.stack);
+        next(error);
+    }
+};
+
+// @desc    Test password verification
+// @route   POST /api/auth/verify-password
+// @access  Private
+exports.verifyPassword = async(req, res, next) => {
+    try {
+        const { password } = req.body;
+
+        // Find user by id and select password
+        const user = await User.findById(req.user.id).select('+password');
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+
+        // Check if password matches
+        const isMatch = await user.matchPassword(password);
+
+        res.status(200).json({
+            success: true,
+            passwordCorrect: isMatch,
+            message: isMatch ? 'Password is correct' : 'Password is incorrect'
+        });
+    } catch (error) {
+        console.error('Password verification test error:', error);
         next(error);
     }
 };

@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
@@ -20,6 +21,7 @@ const ResetPassword = () => {
   
   const { resettoken } = useParams();
   const navigate = useNavigate();
+  const { login } = useAuth();
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword);
@@ -64,8 +66,8 @@ const ResetPassword = () => {
 
       setSuccess('Password has been reset successfully');
       
-      // Store the token in localStorage
-      localStorage.setItem('token', data.token);
+      // Use the login function from AuthContext
+      login(data.token, data.user);
       
       // Redirect to dashboard after 2 seconds
       setTimeout(() => {

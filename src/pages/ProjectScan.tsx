@@ -1,68 +1,118 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import SecurityScanProgress from '@/components/SecurityScanProgress';
 import { toast } from 'sonner';
-import { 
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle 
-} from '@/components/ui/resizable';
-import { SidebarProvider } from '@/components/ui/sidebar';
-import Header from '@/components/Header';
+import { authenticatedRequest } from '@/utils/authUtils';
 import Sidebar from '@/components/Sidebar';
+
+interface ScanLocation {
+  state: {
+    projectId: string;
+    scanId: string;
+  }
+}
 
 const ProjectScan = () => {
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState<'scanning' | 'complete' | 'error'>('scanning');
   const navigate = useNavigate();
+  const { scanId } = useParams();
+  const location = useLocation() as ScanLocation;
+  
+  // Get projectId and scanId from location state or params
+  const projectId = location.state?.projectId;
+  const currentScanId = scanId || location.state?.scanId;
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setStatus('complete');
-          toast.success('Security scan completed successfully!');
-          setTimeout(() => {
-            navigate('/projects/1');
-          }, 2000);
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 1000);
+    if (!currentScanId) {
+      toast.error('Scan ID not found');
+      navigate('/projects');
+      return;
+    }
 
-    return () => clearInterval(interval);
-  }, [navigate]);
+    let pollingInterval: NodeJS.Timeout;
+    let progressCounter = 0;
+    
+    // Function to fetch scan status
+    const fetchScanStatus = async () => {
+      try {
+        const response = await authenticatedRequest(`/api/scans/${currentScanId}`);
+        
+        if (response.success) {
+          const scanData = response.data;
+          
+          // Update status based on scan status
+          if (scanData.status === 'completed') {
+            setStatus('complete');
+            setProgress(100);
+            clearInterval(pollingInterval);
+            
+            toast.success('Security scan completed successfully!');
+            
+            // Navigate to project details after 2 seconds
+            setTimeout(() => {
+              navigate(`/projects/${projectId || scanData.projectId}`);
+            }, 2000);
+          } else if (scanData.status === 'failed') {
+            setStatus('error');
+            clearInterval(pollingInterval);
+            
+            toast.error('Security scan failed');
+          } else if (scanData.status === 'in-progress') {
+            // Calculate progress - we'll use a combination of real progress and simulated progress
+            // This gives users feedback while the scan is running
+            
+            // Move progress forward but never reach 100% until complete
+            if (progressCounter < 90) {
+              // Gradually slow down progress as it gets higher
+              const increment = progressCounter < 30 ? 5 : 
+                               progressCounter < 60 ? 3 : 
+                               progressCounter < 80 ? 2 : 1;
+                               
+              progressCounter += increment;
+              setProgress(progressCounter);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching scan status:', error);
+        
+        // If we can't fetch status, keep the UI progressing to prevent it from appearing stuck
+        if (progressCounter < 90) {
+          progressCounter += 1;
+          setProgress(progressCounter);
+        }
+      }
+    };
+    
+    // Initial check
+    fetchScanStatus();
+    
+    // Poll for status every 3 seconds
+    pollingInterval = setInterval(fetchScanStatus, 3000);
+    
+    // Clean up on unmount
+    return () => {
+      clearInterval(pollingInterval);
+    };
+  }, [currentScanId, navigate, projectId]);
 
   return (
-    <SidebarProvider>
-      <div className="flex h-screen bg-gray-50">
-        <ResizablePanelGroup direction="horizontal">
-          <ResizablePanel defaultSize={20} minSize={15} maxSize={30}>
-            <Sidebar />
-          </ResizablePanel>
-          <ResizableHandle withHandle />
-          <ResizablePanel defaultSize={80}>
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <Header />
-              <main className="flex-1 overflow-y-auto p-6">
-                <div className="container mx-auto">
-                  <SecurityScanProgress progress={progress} status={status} />
-                  <div className="mt-8 text-center">
-                    <img 
-                      src="/images/logo.png" 
-                      alt="CodeSentinel Security Analysis" 
-                      className="mx-auto rounded-lg shadow-lg w-32 h-32 opacity-85"
-                    />
-                  </div>
-                </div>
-              </main>
-            </div>
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
-    </SidebarProvider>
+    <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
+      <Sidebar />
+      <main className="flex-1 p-6 md:p-8">
+        <div className="container mx-auto">
+          <SecurityScanProgress progress={progress} status={status} />
+          <div className="mt-8 text-center">
+            <img 
+              src="/images/logo.png" 
+              alt="CodeSentinel Security Analysis" 
+              className="mx-auto rounded-lg shadow-lg w-32 h-32 opacity-85"
+            />
+          </div>
+        </div>
+      </main>
+    </div>
   );
 };
 

@@ -2,6 +2,7 @@ const express = require('express');
 const dotenv = require('dotenv');
 const cors = require('cors');
 const path = require('path');
+const fileUpload = require('express-fileupload');
 const { connectDB } = require('./config/db');
 const errorHandler = require('./middleware/error');
 
@@ -13,17 +14,31 @@ connectDB();
 
 // Route files
 const authRoutes = require('./routes/auth');
+const integrationRoutes = require('./routes/integration');
+const projectRoutes = require('./routes/project');
+const scanRoutes = require('./routes/scan');
 
 const app = express();
 
 // Body parser
 app.use(express.json());
 
+// File upload middleware
+app.use(fileUpload({
+    limits: { fileSize: 25 * 1024 * 1024 }, // 25MB limit for safety
+    abortOnLimit: true,
+    useTempFiles: false,
+    debug: process.env.NODE_ENV === 'development'
+}));
+
 // Enable CORS
 app.use(cors());
 
 // API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/integrations', integrationRoutes);
+app.use('/api/projects', projectRoutes);
+app.use('/api/scans', scanRoutes);
 
 // Determine if we're in development mode
 const isDevelopment = process.env.NODE_ENV === 'development';

@@ -17,12 +17,18 @@ import {
   NavigationMenuTrigger,
 } from "@/components/ui/navigation-menu";
 import { Bell, User, Menu, X } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Header: React.FC = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const isAuthenticated = false;
+  const { isAuthenticated, user, logout } = useAuth();
   
   const toggleMenu = () => setIsMenuOpen(!isMenuOpen);
+
+  const handleLogout = () => {
+    logout();
+    setIsMenuOpen(false);
+  };
 
   return (
     <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
@@ -94,14 +100,15 @@ const Header: React.FC = () => {
             {/* Auth Section */}
             {isAuthenticated ? (
               <div className="flex items-center space-x-4">
-                <Button variant="ghost" size="icon">
+                {/* <Button variant="ghost" size="icon">
                   <Bell className="h-5 w-5" />
-                </Button>
+                </Button> */}
                 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon">
-                      <User className="h-5 w-5" />
+                    <Button variant="ghost" className="flex items-center space-x-2">
+                      <User className="h-5 w-5 mr-2" />
+                      <span>{user?.firstName || 'User'}</span>
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="w-56">
@@ -115,7 +122,9 @@ const Header: React.FC = () => {
                       <Link to="/settings">Settings</Link>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem>Logout</DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleLogout}>
+                      Logout
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
@@ -152,7 +161,7 @@ const Header: React.FC = () => {
                   <Link to="/dashboard" className="py-2 text-lg">Dashboard</Link>
                   <Link to="/api-integrations" className="py-2 text-lg">API Keys</Link>
                   <Link to="/settings" className="py-2 text-lg">Settings</Link>
-                  <Button className="mt-4">Logout</Button>
+                  <Button className="mt-4" onClick={handleLogout}>Logout</Button>
                 </>
               ) : (
                 <div className="flex flex-col gap-3">

@@ -1,7 +1,8 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { Home, Plus, BarChart2, Settings, Key, Shield, Code, Users, Building, FileCode, BookOpen } from 'lucide-react';
+import { Home, Plus, BarChart2, Settings, Key, Shield, Code, Users, Building, FileCode, BookOpen, LogOut } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
 
 const sidebarItems = [
   {
@@ -19,26 +20,26 @@ const sidebarItems = [
     path: '/projects',
     icon: <BarChart2 className="h-5 w-5" />,
   },
-  {
-    name: 'Security Scans',
-    path: '/security-scans',
-    icon: <Shield className="h-5 w-5" />,
-  },
-  {
-    name: 'Code Analysis',
-    path: '/code-analysis',
-    icon: <Code className="h-5 w-5" />,
-  },
-  {
-    name: 'Team Members',
-    path: '/team',
-    icon: <Users className="h-5 w-5" />,
-  },
-  {
-    name: 'Organizations',
-    path: '/organizations',
-    icon: <Building className="h-5 w-5" />,
-  },
+  // {
+  //   name: 'Security Scans',
+  //   path: '/security-scans',
+  //   icon: <Shield className="h-5 w-5" />,
+  // },
+  // {
+  //   name: 'Code Analysis',
+  //   path: '/code-analysis',
+  //   icon: <Code className="h-5 w-5" />,
+  // },
+  // {
+  //   name: 'Team Members',
+  //   path: '/team',
+  //   icon: <Users className="h-5 w-5" />,
+  // },
+  // {
+  //   name: 'Organizations',
+  //   path: '/organizations',
+  //   icon: <Building className="h-5 w-5" />,
+  // },
   {
     name: 'API & Integrations',
     path: '/api-integrations',
@@ -63,32 +64,34 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onToggle }) => {
   const location = useLocation();
+  const { logout } = useAuth();
   
   return (
     <aside 
       className={cn(
-        "bg-white border-r border-gray-200 h-screen transition-all duration-300",
+        "bg-white border-r border-gray-200 h-screen transition-all duration-300 flex flex-col",
         collapsed ? "w-20" : "w-64"
       )}
     >
       <div className="p-4">
-        {collapsed ? (
-          <div className="flex justify-center">
-            <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
+          {/* <div className="flex justify-center"> */}
+            {/* <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
               <span className="text-white font-bold">C</span>
-            </div>
-          </div>
-        ) : (
+            </div> */}
+          {/* </div> */}
           <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
+            <Link to="/">
+              <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-8 h-8" />
+            </Link>
+            {/* <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
               <span className="text-white font-bold">C</span>
-            </div>
-            <span className="text-xl font-bold text-indigo-600">CodeSentinel</span>
+            </div> */}
+              <span className="text-xl font-bold text-indigo-600">CodeSentinel</span>
+
           </div>
-        )}
       </div>
       
-      <nav className="mt-8">
+      <nav className="mt-8 flex-grow">
         <ul className="space-y-2 px-2">
           {sidebarItems.map((item) => (
             <li key={item.name}>
@@ -106,6 +109,17 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onToggle }) => {
           ))}
         </ul>
       </nav>
+      
+      {/* Logout Button */}
+      <div className="mt-auto p-4 border-t border-gray-200">
+        <button
+          onClick={logout}
+          className="flex items-center w-full px-4 py-3 text-slate-600 rounded-md hover:bg-red-50 hover:text-red-600 transition-colors"
+        >
+          <span className="mr-3"><LogOut className="h-5 w-5" /></span>
+          {!collapsed && <span>Logout</span>}
+        </button>
+      </div>
     </aside>
   );
 };

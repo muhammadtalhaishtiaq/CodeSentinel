@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { BarChart2, ShieldCheck, Search, Clock, Plus } from 'lucide-react';
@@ -12,9 +12,19 @@ import {
   ResizableHandle 
 } from '@/components/ui/resizable';
 import { SidebarProvider } from '@/components/ui/sidebar';
+import { authenticatedRequest } from '@/utils/authUtils';
+
+interface Project {
+  id: string;
+  name: string;
+  description: string;
+  lastScanned: string;
+  status: 'healthy' | 'warning' | 'critical';
+  issuesCount: number;
+}
 
 // Mock project data
-const projects = [
+const mockProjects = [
   {
     id: '1',
     name: 'E-commerce Platform',
@@ -42,6 +52,37 @@ const projects = [
 ];
 
 const Dashboard = () => {
+  const [projects, setProjects] = useState<Project[]>(mockProjects);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const fetchProjects = async () => {
+      try {
+        setLoading(true);
+        const response = await authenticatedRequest('/api/projects/recent');
+        if (response.success) {
+          const transformedProjects = response.data.map((project: any) => ({
+            id: project.id,
+            name: project.name,
+            description: project.description,
+            lastScanned: project.lastScanned,
+            status: project.status,
+            issuesCount: project.vulnerabilityCounts.total
+          }));
+          setProjects(transformedProjects);
+        }
+      } catch (error) {
+        console.error('Error fetching projects:', error);
+        // Keep mock data if API fails
+        setProjects(mockProjects);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchProjects();
+  }, []);
+
   return (
     <SidebarProvider>
       <div className="flex h-screen bg-gray-50">
@@ -97,11 +138,15 @@ const Dashboard = () => {
                   {/* Projects Section */}
                   <div className="mb-8">
                     <h2 className="text-xl font-semibold mb-4">Your Projects</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {projects.map(project => (
-                        <ProjectCard key={project.id} {...project} />
-                      ))}
-                    </div>
+                    {loading ? (
+                      <div className="text-center py-8">Loading projects...</div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {projects.map(project => (
+                          <ProjectCard key={project.id} {...project} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                   
                   {/* Recent Activity */}

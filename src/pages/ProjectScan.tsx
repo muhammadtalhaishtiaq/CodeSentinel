@@ -1,114 +1,126 @@
-import React, { useState, useEffect } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import React, { useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useToast } from '@/hooks/use-toast';
 import SecurityScanProgress from '@/components/SecurityScanProgress';
-import { toast } from 'sonner';
-import { authenticatedRequest } from '@/utils/authUtils';
 import Sidebar from '@/components/Sidebar';
 
-interface ScanLocation {
-  state: {
-    projectId: string;
-    scanId: string;
-  }
+interface ScanStatus {
+  status: 'in-progress' | 'completed' | 'failed';
+  progress: number;
+  currentFile?: string;
+  totalFiles?: number;
+  scannedFiles?: number;
+  vulnerabilitiesFound?: number;
+  estimatedTimeRemaining?: string;
+  message?: string;
 }
 
-const ProjectScan = () => {
-  const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState<'scanning' | 'complete' | 'error'>('scanning');
+const ProjectScan: React.FC = () => {
+  const { id: projectId, scanId } = useParams<{ id: string; scanId: string }>();
   const navigate = useNavigate();
-  const { scanId } = useParams();
-  const location = useLocation() as ScanLocation;
-  
-  // Get projectId and scanId from location state or params
-  const projectId = location.state?.projectId;
-  const currentScanId = scanId || location.state?.scanId;
+  const { toast } = useToast();
+  const [scanStatus, setScanStatus] = useState<ScanStatus>({
+    status: 'in-progress',
+    progress: 0,
+    message: 'Initializing scan...'
+  });
+  const [redirecting, setRedirecting] = useState(false);
+
+  // Function to get random increment between 1-5
+  const getRandomIncrement = () => Math.floor(Math.random() * 4) + 1;
 
   useEffect(() => {
-    if (!currentScanId) {
-      toast.error('Scan ID not found');
-      navigate('/projects');
+    const token = localStorage.getItem('token');
+    if (!token) {
+      toast({
+        title: "Error",
+        description: "Authentication token is missing",
+        variant: "destructive"
+      });
+      navigate('/login');
       return;
     }
 
-    let pollingInterval: NodeJS.Timeout;
-    let progressCounter = 0;
-    
-    // Function to fetch scan status
-    const fetchScanStatus = async () => {
+    const pollInterval = setInterval(async () => {
       try {
-        const response = await authenticatedRequest(`/api/scans/${currentScanId}`);
+        const response = await fetch(`/api/scans/${scanId}/status`, {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
+        const data = await response.json();
         
-        if (response.success) {
-          const scanData = response.data;
-          
-          // Update status based on scan status
-          if (scanData.status === 'completed') {
-            setStatus('complete');
-            setProgress(100);
-            clearInterval(pollingInterval);
+        if (data.success) {
+          // Update actual status from API
+          setScanStatus(prev => ({
+            ...prev,
+            message: data.data.message,
+            status: data.data.status
+          }));
+
+          // Handle progress based on status
+          if (data.data.status === 'in-progress') {
+            // Increment dummy progress while in progress
+            setScanStatus(prev => ({
+              ...prev,
+              progress: Math.min(prev.progress + getRandomIncrement(), 95) // Cap at 95% until completion
+            }));
+          } else if (data.data.status === 'completed') {
+            // Set to 100% on completion
+            setScanStatus(prev => ({
+              ...prev,
+              progress: 100,
+              message: 'Scan completed successfully!'
+            }));
+            setRedirecting(true);
             
-            toast.success('Security scan completed successfully!');
-            
-            // Navigate to project details after 2 seconds
+            // Wait 2 seconds before redirecting
             setTimeout(() => {
-              navigate(`/projects/${projectId || scanData.projectId}`);
+              navigate(`/projects/${projectId}`);
             }, 2000);
-          } else if (scanData.status === 'failed') {
-            setStatus('error');
-            clearInterval(pollingInterval);
-            
-            toast.error('Security scan failed');
-          } else if (scanData.status === 'in-progress') {
-            // Calculate progress - we'll use a combination of real progress and simulated progress
-            // This gives users feedback while the scan is running
-            
-            // Move progress forward but never reach 100% until complete
-            if (progressCounter < 90) {
-              // Gradually slow down progress as it gets higher
-              const increment = progressCounter < 30 ? 5 : 
-                               progressCounter < 60 ? 3 : 
-                               progressCounter < 80 ? 2 : 1;
-                               
-              progressCounter += increment;
-              setProgress(progressCounter);
-            }
+          } else if (data.data.status === 'failed') {
+            // On failure, show error and redirect to projects page
+            toast({
+              title: "Scan Failed",
+              description: "The scan failed to complete. Please try again.",
+              variant: "destructive"
+            });
+            setTimeout(() => {
+              navigate('/projects');
+            }, 2000);
           }
         }
       } catch (error) {
-        console.error('Error fetching scan status:', error);
-        
-        // If we can't fetch status, keep the UI progressing to prevent it from appearing stuck
-        if (progressCounter < 90) {
-          progressCounter += 1;
-          setProgress(progressCounter);
-        }
+        console.error('Error polling scan status:', error);
       }
-    };
-    
-    // Initial check
-    fetchScanStatus();
-    
-    // Poll for status every 3 seconds
-    pollingInterval = setInterval(fetchScanStatus, 3000);
-    
-    // Clean up on unmount
-    return () => {
-      clearInterval(pollingInterval);
-    };
-  }, [currentScanId, navigate, projectId]);
+    }, 2000); // Poll every 2 seconds
+
+    return () => clearInterval(pollInterval);
+  }, [scanId, navigate, toast, projectId]);
 
   return (
     <div className="flex h-screen bg-gray-50 dark:bg-gray-950">
       <Sidebar />
       <main className="flex-1 p-6 md:p-8">
         <div className="container mx-auto">
-          <SecurityScanProgress progress={progress} status={status} />
-          <div className="mt-8 text-center">
-            <img 
-              src="/images/logo.png" 
-              alt="CodeSentinel Security Analysis" 
-              className="mx-auto rounded-lg shadow-lg w-32 h-32 opacity-85"
-            />
+          <SecurityScanProgress {...scanStatus} />
+          <div className="mt-8 space-y-4">
+            <div className="text-center">
+              {redirecting ? (
+                <p className="text-lg text-gray-600 dark:text-gray-400 animate-pulse">
+                  Redirecting to project detail page...
+                </p>
+              ) : (
+                <p className="text-lg text-gray-600 dark:text-gray-400">
+                  {scanStatus.message}
+                </p>
+              )}
+            </div>
+            {scanStatus.totalFiles && scanStatus.totalFiles > 0 && (
+              <p className="text-center text-gray-600 dark:text-gray-400">
+                Files processed: {scanStatus.scannedFiles} of {scanStatus.totalFiles}
+              </p>
+            )}
           </div>
         </div>
       </main>

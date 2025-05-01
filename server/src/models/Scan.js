@@ -11,6 +11,18 @@ const ScanSchema = new mongoose.Schema({
         enum: ['pending', 'in-progress', 'completed', 'failed'],
         default: 'pending'
     },
+    totalFiles: {
+        type: Number,
+        default: 0
+    },
+    scannedFiles: {
+        type: Number,
+        default: 0
+    },
+    error: {
+        type: String,
+        default: null
+    },
     result: {
         vulnerabilities: [{
             type: {
@@ -24,9 +36,17 @@ const ScanSchema = new mongoose.Schema({
             },
             description: String,
             location: String,
-            lineNumber: Number
+            lineNumber: Number,
+            file_path: String,
+            file_name: String,
+            file_extension: String,
+            original_code: String,
+            suggested_code: String,
+            potential_impact: String,
+            potential_solution: String
         }],
         summary: {
+            total: { type: Number, default: 0 },
             lowCount: { type: Number, default: 0 },
             mediumCount: { type: Number, default: 0 },
             highCount: { type: Number, default: 0 },

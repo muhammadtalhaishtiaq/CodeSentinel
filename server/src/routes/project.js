@@ -6,9 +6,11 @@ const {
     updateProject,
     deleteProject,
     addScanToProject,
-    getLatestScan
+    getLatestScan,
+    startScan
 } = require('../controllers/project');
 const { protect } = require('../middleware/auth');
+const { getChatHistory, sendMessage } = require('../controllers/chat');
 
 const router = express.Router();
 
@@ -31,5 +33,12 @@ router.route('/:id/scans')
 
 router.route('/:id/latest-scan')
     .get(getLatestScan);
+
+// Start a new scan for a project
+router.post('/:id/start-scan', startScan);
+
+// Chat routes
+router.get('/:projectId/chats', getChatHistory);
+router.post('/:projectId/chats', sendMessage);
 
 module.exports = router;

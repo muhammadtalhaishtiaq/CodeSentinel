@@ -13,18 +13,18 @@ const Home = () => {
       
       <main className="flex-grow">
         {/* Hero Section */}
-        <section className="bg-gradient-to-br from-indigo-600 to-indigo-700 py-20">
+        <section className="bg-gradient-to-br from-indigo-600 to-indigo-700 py-10">
           <div className="container mx-auto px-6">
             <div className="flex flex-col lg:flex-row items-center">
               <div className="w-full lg:w-1/2 text-center lg:text-left">
-                <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 animate-fade-in">
+                <h2 className="text-4xl md:text-5xl lg:text-6xl font-bold text-white mb-6 animate-fade-in">
                   Automated AI-Powered<br />Code Security Audits
-                </h1>
+                </h2>
                 <p className="text-xl text-indigo-100 mb-8">
                   CodeSentinel converses with you about security issues, teaches best practices,
                   and integrates smoothly into your workflow while keeping your code private.
                 </p>
-                <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
+                <div className="flex flex-col sm:flex-row justify-center lg:justify-start">
                   <Link to="/register">
                     <Button size="lg" className="bg-accent text-accent-foreground hover:bg-accent/90">
                       Get Started
@@ -39,13 +39,14 @@ const Home = () => {
                 </div>
               </div>
               <div className="w-full lg:w-1/2 mt-12 lg:mt-0 flex justify-center lg:justify-end animate-scale-in">
-                <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
+                <img src="/images/11.png" alt="CodeSentinel Logo" className="h-100" /> 
+                {/* <div className="bg-white p-6 rounded-lg shadow-xl max-w-md w-full">
                   <div className="flex items-center space-x-2 mb-4">
                     <div className="w-3 h-3 rounded-full bg-red-500"></div>
                     <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
                     <div className="w-3 h-3 rounded-full bg-green-500"></div>
                   </div>
-                  <pre className="bg-gray-900 text-gray-100 p-4 rounded text-sm overflow-x-auto">
+                  <pre className="overflow-x-auto">
                     <code>{`// Potential security vulnerability detected
 function validateInput(userInput) {
   return eval(userInput); // Unsafe usage of eval()
@@ -62,7 +63,7 @@ function validateInputSafely(userInput) {
                     <ShieldCheck className="h-4 w-4 mr-2" />
                     <span>Security issue identified and fixed</span>
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
           </div>

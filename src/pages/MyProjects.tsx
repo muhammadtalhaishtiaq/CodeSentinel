@@ -48,6 +48,15 @@ interface Project {
     status: string;
     createdAt: string;
     completedAt?: string;
+    result?: {
+      summary?: {
+        total?: number;
+        criticalCount?: number;
+        highCount?: number;
+        mediumCount?: number;
+        lowCount?: number;
+      };
+    };
   };
   createdAt: string;
   updatedAt: string;
@@ -67,10 +76,30 @@ const MyProjects = () => {
       setLoading(true);
       try {
         const response = await authenticatedRequest('/api/projects', { method: 'GET' });
-        setProjects(response.data.data.map((project: any) => ({
-          ...project,
-          id: project._id // Add id property for compatibility with existing code
-        })));
+        if (response.data && response.data) {
+          const projectsData = response.data.map((project: any) => ({
+            _id: project._id,
+            id: project._id,
+            name: project.name,
+            description: project.description,
+            repository: project.repository,
+            status: project.status || 'none',
+            summary: {
+              totalScans: project.summary?.totalScans || 0,
+              lastScanDate: project.summary?.lastScanDate,
+              vulnerabilityCounts: {
+                low: project.summary?.vulnerabilityCounts?.low || 0,
+                medium: project.summary?.vulnerabilityCounts?.medium || 0,
+                high: project.summary?.vulnerabilityCounts?.high || 0,
+                critical: project.summary?.vulnerabilityCounts?.critical || 0
+              }
+            },
+            latestScan: project.latestScan || null,
+            createdAt: project.createdAt,
+            updatedAt: project.updatedAt
+          }));
+          setProjects(projectsData);
+        }
       } catch (error) {
         console.error('Error fetching projects:', error);
       } finally {
@@ -228,17 +257,20 @@ const MyProjects = () => {
                     <div className="space-y-2">
                       <div className="text-sm font-medium">Vulnerabilities</div>
                       <div className="flex flex-wrap gap-2">
+                        <Badge className="bg-gray-500/10 text-gray-500">
+                          Total: {project.latestScan?.result?.summary?.total || 0}
+                        </Badge>
                         <Badge className={getVulnerabilityColor('critical')}>
-                          Critical: {project.summary.vulnerabilityCounts.critical}
+                          Critical: {project.latestScan?.result?.summary?.criticalCount || 0}
                         </Badge>
                         <Badge className={getVulnerabilityColor('high')}>
-                          High: {project.summary.vulnerabilityCounts.high}
+                          High: {project.latestScan?.result?.summary?.highCount || 0}
                         </Badge>
                         <Badge className={getVulnerabilityColor('medium')}>
-                          Medium: {project.summary.vulnerabilityCounts.medium}
+                          Medium: {project.latestScan?.result?.summary?.mediumCount || 0}
                         </Badge>
                         <Badge className={getVulnerabilityColor('low')}>
-                          Low: {project.summary.vulnerabilityCounts.low}
+                          Low: {project.latestScan?.result?.summary?.lowCount || 0}
                         </Badge>
                       </div>
                     </div>

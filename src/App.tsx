@@ -65,7 +65,7 @@ const App = () => (
                 <ProjectDetail />
               </ProtectedRoute>
             } />
-            <Route path="/project-scan/:scanId" element={
+            <Route path="/project/:id/scan/:scanId" element={
               <ProtectedRoute>
                 <ProjectScan />
               </ProtectedRoute>

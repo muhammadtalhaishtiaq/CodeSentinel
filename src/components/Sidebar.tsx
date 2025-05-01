@@ -45,11 +45,11 @@ const sidebarItems = [
     path: '/api-integrations',
     icon: <Key className="h-5 w-5" />,
   },
-  {
-    name: 'Documentation',
-    path: '/docs',
-    icon: <BookOpen className="h-5 w-5" />,
-  },
+  // {
+  //   name: 'Documentation',
+  //   path: '/docs',
+  //   icon: <BookOpen className="h-5 w-5" />,
+  // },
   {
     name: 'Settings',
     path: '/settings',

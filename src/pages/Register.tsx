@@ -45,10 +45,10 @@ const Register = () => {
     e.preventDefault();
     
     // Validate form
-    if (!acceptTerms) {
-      setError('You must accept the terms of service and privacy policy');
-      return;
-    }
+    // if (!acceptTerms) {
+    //   setError('You must accept the terms of service and privacy policy');
+    //   return;
+    // }
 
     if (formData.password !== formData.confirmPassword) {
       setError('Passwords do not match');
@@ -182,7 +182,7 @@ const Register = () => {
                   </button>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
+              {/* <div className="flex items-center space-x-2">
                 <Checkbox 
                   id="terms" 
                   checked={acceptTerms}
@@ -201,7 +201,7 @@ const Register = () => {
                     privacy policy
                   </Link>
                 </label>
-              </div>
+              </div> */}
               <Button 
                 type="submit" 
                 className="w-full"

@@ -37,9 +37,6 @@ const Header: React.FC = () => {
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
             <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-8 h-8" />
-            {/* <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center"> */}
-              {/* <span className="text-white font-bold">C</span> */}
-            {/* </div> */}
             <span className="text-xl font-bold text-indigo-600">CodeSentinel</span>
           </Link>
           
@@ -47,21 +44,21 @@ const Header: React.FC = () => {
           <div className="hidden lg:flex items-center space-x-8">
             <NavigationMenu>
               <NavigationMenuList>
-                <NavigationMenuItem>
-                  <NavigationMenuTrigger>Products</NavigationMenuTrigger>
-                  <NavigationMenuContent>
-                    <div className="grid gap-3 p-6 w-[400px]">
+                {/* <NavigationMenuItem> */}
+                  {/* <NavigationMenuTrigger>Products</NavigationMenuTrigger> */}
+                  {/* <NavigationMenuContent> */}
+                    {/* <div className="grid gap-3 p-6 w-[400px]">
                       <Link to="/products/code-security" className="block p-3 hover:bg-slate-50 rounded-lg">
                         <h3 className="text-sm font-semibold">Code Security</h3>
                         <p className="text-sm text-gray-500">Find and fix vulnerabilities in your code</p>
-                      </Link>
+                      </Link> */}
                       {/* <Link to="/products/cloud-security" className="block p-3 hover:bg-slate-50 rounded-lg">
                         <h3 className="text-sm font-semibold">Cloud Security</h3>
                         <p className="text-sm text-gray-500">Secure your cloud infrastructure</p>
                       </Link> */}
-                    </div>
-                  </NavigationMenuContent>
-                </NavigationMenuItem>
+                    {/* </div> */}
+                  {/* </NavigationMenuContent> */}
+                {/* </NavigationMenuItem> */}
 
                 {/* <NavigationMenuItem>
                   <Link to="/platform" className="text-sm">

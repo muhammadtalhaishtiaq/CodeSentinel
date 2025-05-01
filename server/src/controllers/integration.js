@@ -1,5 +1,8 @@
 const SourceCredential = require('../models/SourceCredential');
 const Repository = require('../models/Repository');
+const path = require('path');
+const fs = require('fs/promises');
+const fetch = require('node-fetch');
 
 // @desc    Get user's source credentials
 // @route   GET /api/integrations/credentials
@@ -322,7 +325,7 @@ exports.testConnection = async(req, res, next) => {
 // @access  Private
 exports.getRepositories = async(req, res, next) => {
     try {
-        const repositories = await Repository.find({ user: req.user._id });
+        const repositories = await Repository.find({ user: req.user._id }).sort({ _id: -1 });
 
         res.status(200).json({
             success: true,
@@ -581,5 +584,153 @@ exports.updateDefaultProvider = async(req, res, next) => {
     } catch (error) {
         console.error('Error updating default provider:', error);
         next(error);
+    }
+};
+
+// @desc    Fetch code from GitHub repository branch
+// @route   POST /api/integrations/fetch-code
+// @access  Private
+exports.fetchRepositoryCode = async(req, res, next) => {
+    try {
+        const { repositoryId, branch } = req.body;
+        console.log(`[DEBUG] Starting fetchRepositoryCode for repositoryId: ${repositoryId}, branch: ${branch}`);
+
+        if (!repositoryId || !branch) {
+            console.log('[DEBUG] Missing required parameters:', { repositoryId, branch });
+            return res.status(400).json({
+                success: false,
+                message: 'Repository ID and branch are required'
+            });
+        }
+
+        // Find repository and credentials
+        console.log('[DEBUG] Looking up repository and credentials...');
+        const repository = await Repository.findOne({
+            _id: repositoryId,
+            user: req.user._id
+        });
+
+        if (!repository) {
+            console.log('[DEBUG] Repository not found');
+            return res.status(404).json({
+                success: false,
+                message: 'Repository not found'
+            });
+        }
+        console.log(`[DEBUG] Found repository: ${repository.name}`);
+
+        const credential = await SourceCredential.findOne({
+            user: req.user._id,
+            provider: repository.provider,
+            isActive: true
+        });
+
+        if (!credential) {
+            console.log('[DEBUG] No active credentials found');
+            return res.status(404).json({
+                success: false,
+                message: 'No active credentials found'
+            });
+        }
+        console.log('[DEBUG] Found active credentials');
+
+        // Create temp directory for this scan
+        const tempDir = path.join(process.cwd(), 'server', 'temp', `${repository._id}_${Date.now()}`);
+        console.log(`[DEBUG] Creating temp directory: ${tempDir}`);
+        await fs.mkdir(tempDir, { recursive: true });
+
+        // First, get the list of changed files in this branch
+        console.log(`[DEBUG] Fetching branch changes from GitHub API...`);
+        const compareResponse = await fetch(`https://api.github.com/repos/${repository.name}/compare/main...${branch}`, {
+            headers: {
+                Authorization: `token ${credential.githubToken}`,
+                Accept: 'application/vnd.github.v3+json'
+            }
+        });
+
+        if (!compareResponse.ok) {
+            const errorData = await compareResponse.json();
+            console.log(`[DEBUG] Failed to fetch branch changes. Status: ${compareResponse.status}, Error:`, errorData);
+            throw new Error(errorData.message || 'Failed to fetch branch changes');
+        }
+
+        const compareData = await compareResponse.json();
+        const changedFiles = compareData.files || [];
+        console.log(`[DEBUG] Found ${changedFiles.length} changed files in branch`);
+
+        // Filter for only text files that were modified or added
+        const textFiles = changedFiles.filter(file =>
+            file.status !== 'removed' &&
+            !file.filename.endsWith('.png') &&
+            !file.filename.endsWith('.jpg') &&
+            !file.filename.endsWith('.jpeg') &&
+            !file.filename.endsWith('.gif') &&
+            !file.filename.endsWith('.ico') &&
+            !file.filename.endsWith('.svg') &&
+            !file.filename.endsWith('.pdf') &&
+            !file.filename.endsWith('.zip') &&
+            !file.filename.endsWith('.tar') &&
+            !file.filename.endsWith('.gz')
+        );
+        console.log(`[DEBUG] Filtered to ${textFiles.length} text files`);
+
+        const files = [];
+        let successCount = 0;
+        let errorCount = 0;
+
+        // Fetch only the changed files
+        console.log('[DEBUG] Starting to fetch individual file contents...');
+        for (const file of textFiles) {
+            try {
+                console.log(`[DEBUG] Fetching content for: ${file.filename}`);
+                const fileResponse = await fetch(`https://api.github.com/repos/${repository.name}/contents/${file.filename}?ref=${branch}`, {
+                    headers: {
+                        Authorization: `token ${credential.githubToken}`,
+                        Accept: 'application/vnd.github.v3.raw'
+                    }
+                });
+
+                if (!fileResponse.ok) {
+                    const errorData = await fileResponse.json();
+                    console.log(`[DEBUG] Failed to fetch ${file.filename}. Status: ${fileResponse.status}, Error:`, errorData);
+                    errorCount++;
+                    continue;
+                }
+
+                const content = await fileResponse.text();
+                const filePath = path.join(tempDir, file.filename);
+                await fs.mkdir(path.dirname(filePath), { recursive: true });
+                await fs.writeFile(filePath, content);
+                files.push({
+                    path: file.filename,
+                    content
+                });
+                successCount++;
+                console.log(`[DEBUG] Successfully fetched: ${file.filename}`);
+            } catch (error) {
+                console.error(`[DEBUG] Error fetching ${file.filename}:`, error);
+                errorCount++;
+            }
+        }
+
+        console.log(`[DEBUG] File fetch complete. Success: ${successCount}, Errors: ${errorCount}`);
+        console.log(`[DEBUG] Total files to analyze: ${files.length}`);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                files,
+                tempDir,
+                totalFiles: textFiles.length,
+                successCount,
+                errorCount
+            }
+        });
+    } catch (error) {
+        console.error('[DEBUG] Error in fetchRepositoryCode:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to fetch repository code'
+        });
     }
 };

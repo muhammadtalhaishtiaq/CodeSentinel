@@ -1,27 +1,139 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { toast } from '@/components/ui/use-toast';
 import Sidebar from '@/components/Sidebar';
-import { Upload, Github, AlertCircle } from 'lucide-react';
+import { Upload, Github } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
+import Select from 'react-select';
+import axios from 'axios';
+import { useToast } from '@/hooks/use-toast';
+
+interface Repository {
+  _id: string;
+  name: string;
+  provider: 'github' | 'bitbucket';
+  repoId: string;
+}
+
+interface RepositoryOption {
+  value: string;
+  label: string;
+}
+
+interface BranchOption {
+  value: string;
+  label: string;
+}
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB in bytes
 
 const NewProject = () => {
+  const { toast } = useToast();
   const [projectName, setProjectName] = useState('');
   const [description, setDescription] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [selectedRepo, setSelectedRepo] = useState<RepositoryOption | null>(null);
+  const [branches, setBranches] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<BranchOption | null>(null);
+  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   
+  // Fetch repositories on component mount
+  useEffect(() => {
+    const fetchRepositories = async () => {
+      try {
+        const response = await authenticatedRequest('/api/integrations/repositories');
+        if (response?.success && Array.isArray(response.data)) {
+          setRepositories(response.data);
+        } else {
+          setRepositories([]);
+          console.error('Invalid repositories data:', response);
+        }
+      } catch (error) {
+        console.error('Error fetching repositories:', error);
+        setRepositories([]);
+        toast({
+          title: 'Error',
+          description: 'Failed to load repositories',
+          variant: 'destructive'
+        });
+      }
+    };
+
+    fetchRepositories();
+  }, []);
+
+  // Fetch branches when repository is selected
+  useEffect(() => {
+    const fetchBranches = async () => {
+      if (!selectedRepo?.value) {
+        setBranches([]);
+        setSelectedBranch(null);
+        return;
+      }
+
+      setIsLoadingBranches(true);
+      setBranches([]);
+      setSelectedBranch(null);
+
+      try {
+        const repository = repositories.find(r => r._id === selectedRepo.value);
+        if (!repository) {
+          throw new Error('Repository not found');
+        }
+
+        const credentialsResponse = await authenticatedRequest('/api/integrations/credentials');
+        if (!credentialsResponse?.success || !Array.isArray(credentialsResponse.data)) {
+          throw new Error('Failed to fetch credentials');
+        }
+
+        const githubCred = credentialsResponse.data.find((c: any) => c.provider === 'github');
+        if (!githubCred?.githubToken) {
+          throw new Error('GitHub credentials not found');
+        }
+
+        const response = await fetch(`https://api.github.com/repos/${repository.name}/branches`, {
+          headers: {
+            Authorization: `token ${githubCred.githubToken}`,
+            Accept: 'application/vnd.github.v3+json'
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch branches');
+        }
+
+        const data = await response.json();
+        if (!Array.isArray(data)) {
+          throw new Error('Invalid branches data');
+        }
+
+        setBranches(data.map((branch: any) => branch.name));
+      } catch (error) {
+        console.error('Error fetching branches:', error);
+        toast({
+          title: 'Error',
+          description: error instanceof Error ? error.message : 'Failed to load branches',
+          variant: 'destructive'
+        });
+        setBranches([]);
+      } finally {
+        setIsLoadingBranches(false);
+      }
+    };
+
+    fetchBranches();
+  }, [selectedRepo, repositories]);
+
   const validateFile = (file: File): boolean => {
     setFileError(null);
     
@@ -87,7 +199,7 @@ const NewProject = () => {
       const response = await authenticatedRequest('/api/scans/upload', {
         method: 'POST',
         headers: {
-          // Don't set Content-Type here, it will be set automatically with boundary for FormData
+          // No Content-Type here, it will be set automatically with boundary for FormData
         },
         body: formData,
         isFormData: true
@@ -136,13 +248,100 @@ const NewProject = () => {
     }
   };
   
-  const handleRepoSubmit = (e: React.FormEvent) => {
+  const handleRepoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // This will be implemented separately for GitHub/Bitbucket integration
-    toast({
-      title: 'Coming soon',
-      description: 'Repository integration will be available soon',
-    });
+    if (!selectedRepo || !selectedBranch || !projectName) {
+      toast({
+        variant: 'destructive',
+        description: 'Please select a repository, branch, and enter a project name'
+      });
+      return;
+    }
+
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        toast({
+          variant: 'destructive',
+          description: 'Authentication token is missing. Please log in again.'
+        });
+        navigate('/login');
+        return;
+      }
+
+      console.log('[DEBUG] Creating project with:', {
+        name: projectName,
+        description: description,
+        repositoryId: selectedRepo.value,
+        branch: selectedBranch.value
+      });
+
+      // Create project
+      const response = await axios.post('/api/projects', {
+        name: projectName,
+        description: description,
+        repositoryId: selectedRepo.value,
+        branch: selectedBranch.value
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      console.log('[DEBUG] Project creation response:', response.data);
+      console.log('id ', response.data.data._id);
+
+      if (!response.data || !response.data.data._id) {
+        throw new Error('Invalid response from server: Project ID is missing');
+      }
+
+      // Start scan
+      console.log('[DEBUG] Starting scan for project:', response.data.data._id);
+      const scanResponse = await axios.post(`/api/projects/${response.data.data._id}/start-scan`, {
+        branch: selectedBranch.value
+      }, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      console.log('[DEBUG] Scan start response:', scanResponse.data);
+
+      if (!scanResponse.data || !scanResponse.data.data._id) {
+        throw new Error('Invalid response from server: Scan ID is missing');
+      }
+
+      toast({
+        description: 'Project created and scan started successfully'
+      });
+
+      // // Navigate to scan progress page
+      navigate(`/project/${response.data.data._id}/scan/${scanResponse.data.data._id}`);
+    } catch (error) {
+      console.error('[DEBUG] Error in handleRepoSubmit:', error);
+      if (axios.isAxiosError(error)) {
+        if (error.response?.status === 401) {
+          toast({
+            variant: 'destructive',
+            description: 'Authentication token is missing or invalid. Please log in again.'
+          });
+          navigate('/login');
+        } else {
+          const errorMessage = error.response?.data?.message || 
+                             (error.response?.data ? JSON.stringify(error.response.data) : 'Failed to create project');
+          console.error('[DEBUG] Server error response:', error.response?.data);
+          toast({
+            variant: 'destructive',
+            description: errorMessage
+          });
+        }
+      } else {
+        toast({
+          variant: 'destructive',
+          description: error instanceof Error ? error.message : 'An unexpected error occurred'
+        });
+      }
+    }
   };
   
   return (
@@ -154,147 +353,92 @@ const NewProject = () => {
           <div className="container mx-auto max-w-4xl">
             <h1 className="text-3xl font-bold mb-8">New Security Scan</h1>
             
-            <Tabs defaultValue="upload">
+            <Tabs defaultValue="repository">
               <TabsList className="grid w-full grid-cols-2 mb-8">
-                <TabsTrigger value="upload" className="text-lg py-3">
-                  <Upload className="mr-2 h-5 w-5" />
-                  Upload Code
-                </TabsTrigger>
                 <TabsTrigger value="repository" className="text-lg py-3">
                   <Github className="mr-2 h-5 w-5" />
                   Connect Repository
                 </TabsTrigger>
               </TabsList>
               
-              <TabsContent value="upload">
-                <Card className="border-2 border-dashed border-gray-300 p-10">
-                  <form onSubmit={handleUploadSubmit}>
-                    <div 
-                      className="flex flex-col items-center justify-center text-center cursor-pointer py-8"
-                      onDragOver={handleDragOver}
-                      onDrop={handleDrop}
-                    >
-                      <Upload className="h-12 w-12 text-slate-400 mb-4" />
-                      <h3 className="text-xl font-medium mb-2">Drag and drop your code archive</h3>
-                      <p className="text-slate-500 mb-6 max-w-md">
-                        Upload a ZIP file containing your source code for security analysis (Max 20MB)
-                      </p>
-                      
-                      {fileError && (
-                        <div className="flex items-center gap-2 text-red-500 mb-4 p-2 bg-red-50 rounded w-full max-w-md">
-                          <AlertCircle className="h-5 w-5" />
-                          <span>{fileError}</span>
-                        </div>
-                      )}
-                      
-                      {selectedFile && (
-                        <div className="flex items-center gap-2 text-green-600 mb-4 p-2 bg-green-50 rounded w-full max-w-md">
-                          <span className="font-medium">Selected: {selectedFile.name}</span>
-                          <span className="text-xs">({(selectedFile.size / (1024 * 1024)).toFixed(2)}MB)</span>
-                        </div>
-                      )}
-                      
-                      <div className="flex flex-col space-y-4 w-full max-w-md">
-                        <Button variant="outline" className="relative" type="button">
-                          Browse Files
-                          <Input 
-                            ref={fileInputRef}
-                            type="file" 
-                            className="absolute inset-0 opacity-0 cursor-pointer" 
-                            accept=".zip"
-                            onChange={handleFileChange}
-                          />
-                        </Button>
-                        
-                        <div className="space-y-2">
-                          <Label htmlFor="project-name">Project Name</Label>
-                          <Input 
-                            id="project-name" 
-                            value={projectName}
-                            onChange={(e) => setProjectName(e.target.value)}
-                            placeholder="Enter a name for your project"
-                            required
-                          />
-                        </div>
-                        
-                        <div className="space-y-2">
-                          <Label htmlFor="project-description">Description (optional)</Label>
-                          <Input 
-                            id="project-description" 
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Enter a description for your project"
-                          />
-                        </div>
-                        
-                        <Button 
-                          type="submit" 
-                          disabled={!projectName || !selectedFile || isUploading} 
-                          className="w-full"
-                        >
-                          {isUploading ? "Uploading..." : "Start Security Scan"}
-                        </Button>
-                      </div>
-                    </div>
-                  </form>
-                </Card>
-              </TabsContent>
-              
-              <TabsContent value="repository">
-                <Card className="p-10">
-                  <form onSubmit={handleRepoSubmit}>
-                    <div className="text-center mb-8">
-                      <h3 className="text-xl font-medium mb-2">Connect a Git Repository</h3>
-                      <p className="text-slate-500 max-w-md mx-auto">
-                        To scan a repository, first connect your GitHub or Bitbucket account in API & Integrations
-                      </p>
+              <Card className="p-10">
+                <form onSubmit={(e) => {
+                  e.preventDefault();
+                  handleRepoSubmit(e);
+                }}>
+                  <div className="text-center mb-8">
+                    <h3 className="text-xl font-medium mb-2">Connect a Git Repository</h3>
+                    <p className="text-slate-500 max-w-md mx-auto">
+                      Select a repository and branch to start the security scan
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-6 max-w-md mx-auto">
+                    <div className="space-y-2">
+                      <Label htmlFor="repository">Select Repository</Label>
+                      <Select
+                        id="repository"
+                        value={selectedRepo}
+                        onChange={(newValue) => setSelectedRepo(newValue as RepositoryOption)}
+                        options={repositories.map(repo => ({
+                          value: repo._id,
+                          label: repo.name
+                        }))}
+                        placeholder="Select repository..."
+                        className="react-select-container"
+                        classNamePrefix="react-select"
+                      />
                     </div>
                     
-                    <div className="space-y-6 max-w-md mx-auto">
-                      <div className="space-y-2">
-                        <Label htmlFor="repository">Select Repository</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select a repository" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="repo1">user/repository-1</SelectItem>
-                            <SelectItem value="repo2">user/repository-2</SelectItem>
-                            <SelectItem value="repo3">organization/repository-3</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label htmlFor="branch">Branch</Label>
-                        <Select>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select a branch" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="main">main</SelectItem>
-                            <SelectItem value="develop">develop</SelectItem>
-                            <SelectItem value="feature">feature/new-feature</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label htmlFor="repo-project-name">Project Name</Label>
-                        <Input 
-                          id="repo-project-name" 
-                          placeholder="Enter a name for your project"
-                          required
-                        />
-                      </div>
-                      
-                      <Button type="submit" className="w-full">
-                        Start Security Scan
-                      </Button>
+                    <div className="space-y-2">
+                      <Label htmlFor="branch">Branch</Label>
+                      <Select
+                        id="branch"
+                        value={selectedBranch}
+                        onChange={(newValue) => setSelectedBranch(newValue as BranchOption)}
+                        options={branches.map(branch => ({
+                          value: branch,
+                          label: branch
+                        }))}
+                        placeholder="Select branch..."
+                        isDisabled={!selectedRepo || isLoadingBranches}
+                        isLoading={isLoadingBranches}
+                        className="react-select-container"
+                        classNamePrefix="react-select"
+                      />
                     </div>
-                  </form>
-                </Card>
-              </TabsContent>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="repo-project-name">Project Name</Label>
+                      <Input 
+                        id="repo-project-name"
+                        value={projectName}
+                        onChange={(e) => setProjectName(e.target.value)}
+                        placeholder="Enter a name for your project"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="repo-project-description">Description (optional)</Label>
+                      <Input 
+                        id="repo-project-description"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Enter a description for your project"
+                      />
+                    </div>
+                    
+                    <Button 
+                      type="submit" 
+                      className="w-full"
+                      disabled={!selectedRepo || !selectedBranch || !projectName.trim()}
+                    >
+                      Start Security Scan
+                    </Button>
+                  </div>
+                </form>
+              </Card>
             </Tabs>
           </div>
         </main>

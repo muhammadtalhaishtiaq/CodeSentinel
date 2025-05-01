@@ -17,4 +17,6 @@ router.route('/upload')
 router.route('/:id')
     .get(getScanStatus);
 
+router.get('/:scanId/status', getScanStatus);
+
 module.exports = router;

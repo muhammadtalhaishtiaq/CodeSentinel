@@ -10,8 +10,8 @@ A modern code security analysis platform built with MERN stack (MongoDB, Express
 # Scanned Projects
 ![image](https://github.com/user-attachments/assets/f3a6751a-8572-49c5-a8a4-a0f73d66d838)
 
-# Security Scan
-![image](https://github.com/user-attachments/assets/7b901ccd-9f46-457a-a682-2570bd26b8ed)
+# Security Scan Process
+![ezgif com-animated-gif-maker (1)](https://github.com/user-attachments/assets/7fb147b8-70ed-40a6-b279-e4203aa9ac6a)
 
 # Project Detail
 ![ezgif com-animated-gif-maker](https://github.com/user-attachments/assets/7aa8ade0-a8f5-4471-8361-0d76374a0056)

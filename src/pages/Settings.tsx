@@ -88,8 +88,10 @@ const Settings = () => {
       // Use the utility function to make the authenticated request
       const data = await authenticatedRequest(
         '/api/auth/update-profile',
-        'PUT',
-        requestData
+        {
+          method: 'PUT',
+          body: JSON.stringify(requestData)
+        }
       );
       
       // Update user data in auth context

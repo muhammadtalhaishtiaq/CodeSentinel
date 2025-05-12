@@ -2,6 +2,22 @@
 
 A modern code security analysis platform built with MERN stack (MongoDB, Express, React, Node.js).
 ## Project info
+![image](https://github.com/user-attachments/assets/839b6385-36e9-4367-9a6b-9080bf1c746e)
+
+# Dashboard
+![image](https://github.com/user-attachments/assets/b27c9ea5-94e9-4620-bf20-49d3816ad401)
+
+# Scanned Projects
+![image](https://github.com/user-attachments/assets/f3a6751a-8572-49c5-a8a4-a0f73d66d838)
+
+# Security Scan Process
+![ezgif com-animated-gif-maker (1)](https://github.com/user-attachments/assets/7fb147b8-70ed-40a6-b279-e4203aa9ac6a)
+
+# Project Detail
+![ezgif com-animated-gif-maker](https://github.com/user-attachments/assets/7aa8ade0-a8f5-4471-8361-0d76374a0056)
+
+# Integrations
+![image](https://github.com/user-attachments/assets/d9a5a4f7-859d-47a5-bd96-b671abde36ce)
 
 # Guarding Your Code with Intelligent Precision
 

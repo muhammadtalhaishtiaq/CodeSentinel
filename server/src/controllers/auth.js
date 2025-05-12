@@ -117,6 +117,7 @@ exports.getMe = async(req, res, next) => {
 // @route   POST /api/auth/forgotpassword
 // @access  Public
 exports.forgotPassword = async(req, res, next) => {
+    console.log('Forgot password request received');
     try {
         const { email } = req.body;
 
@@ -136,39 +137,39 @@ exports.forgotPassword = async(req, res, next) => {
         await user.save({ validateBeforeSave: false });
 
         // Create reset URL
-        const resetUrl = `${req.protocol}://${req.get('host')}/reset-password/${resetToken}`;
-
+        const resetUrl = `${process.env.BASE_URL}/reset-password/${resetToken}`;
+        console.log('Reset URL:', resetUrl);
         // Create message
         const message = `
-      <h1>Password Reset</h1>
-      <p>You requested a password reset</p>
-      <p>Click the link below to reset your password:</p>
-      <a href="${resetUrl}" target="_blank">Reset Password</a>
-      <p>If you didn't request this, please ignore this email.</p>
-    `;
+                <h1>Password Reset</h1>
+                <p>You requested a password reset</p>
+                <p>Click the link below to reset your password:</p>
+                <a href="${resetUrl}" target="_blank">Reset Password</a>
+                <p>If you didn't request this, please ignore this email.</p>
+                `;
+        console.log('Message:', message);
+        // try {
+        await sendEmail({
+            email: user.email,
+            subject: 'Password reset token',
+            message
+        });
 
-        try {
-            await sendEmail({
-                email: user.email,
-                subject: 'Password reset token',
-                message
-            });
+        res.status(200).json({
+            success: true,
+            message: 'Email sent'
+        });
+        // } catch (err) {
+        //     // Clear reset token fields if email fails
+        //     user.resetPasswordToken = undefined;
+        //     user.resetPasswordExpire = undefined;
+        //     await user.save({ validateBeforeSave: false });
 
-            res.status(200).json({
-                success: true,
-                message: 'Email sent'
-            });
-        } catch (err) {
-            // Clear reset token fields if email fails
-            user.resetPasswordToken = undefined;
-            user.resetPasswordExpire = undefined;
-            await user.save({ validateBeforeSave: false });
-
-            return res.status(500).json({
-                success: false,
-                message: 'Email could not be sent'
-            });
-        }
+        //     return res.status(500).json({
+        //         success: false,
+        //         message: 'Email could not be sent'
+        //     });
+        // }
     } catch (error) {
         next(error);
     }
@@ -349,6 +350,39 @@ exports.verifyPassword = async(req, res, next) => {
         });
     } catch (error) {
         console.error('Password verification test error:', error);
+        next(error);
+    }
+};
+
+// @desc    Validate reset token
+// @route   GET /api/auth/validate-reset-token/:resettoken
+// @access  Public
+exports.validateResetToken = async(req, res, next) => {
+    try {
+        // Get hashed token
+        const resetPasswordToken = crypto
+            .createHash('sha256')
+            .update(req.params.resettoken)
+            .digest('hex');
+
+        // Find user by reset token and check if expired
+        const user = await User.findOne({
+            resetPasswordToken,
+            resetPasswordExpire: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid or expired reset token'
+            });
+        }
+
+        res.status(200).json({
+            success: true,
+            message: 'Valid reset token'
+        });
+    } catch (error) {
         next(error);
     }
 };

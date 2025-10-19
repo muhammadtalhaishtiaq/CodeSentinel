@@ -1,716 +1,486 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
-import { Switch } from '@/components/ui/switch';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
-import { Github, GitBranch, Check, X, Trash, Key, RefreshCw, AlertCircle, Loader } from 'lucide-react';
+import { Github, Check, X, Loader, ExternalLink, Shield, AlertCircle, Cloud, Key } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
 import { useToast } from '@/components/ui/use-toast';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
-interface Repository {
-  _id: string;
-  name: string;
-  provider: 'github' | 'bitbucket';
-  connectedAt: string;
-  lastScanDate: string | null;
-  isEnabled: boolean;
-}
-
-interface SourceCredential {
-  id: string;
-  provider: 'github' | 'bitbucket';
-  isDefault: boolean;
-  isActive: boolean;
-  githubToken?: string;
-  bitbucketUsername?: string;
-  bitbucketToken?: string;
-  createdAt: string;
-  updatedAt: string;
+interface OAuthStatus {
+  github: {
+    connected: boolean;
+    username?: string;
+    email?: string;
+    connectedAt?: string;
+    isDefault?: boolean;
+  } | null;
+  azure: {
+    connected: boolean;
+    username?: string;
+    email?: string;
+    connectedAt?: string;
+    isDefault?: boolean;
+  } | null;
+  bitbucket: {
+    connected: boolean;
+    username?: string;
+    email?: string;
+    connectedAt?: string;
+    isDefault?: boolean;
+  } | null;
 }
 
 const ApiIntegrations = () => {
-  const [githubToken, setGithubToken] = useState('');
-  const [bitbucketUsername, setBitbucketUsername] = useState('');
-  const [bitbucketToken, setBitbucketToken] = useState('');
-  const [isTestingConnection, setIsTestingConnection] = useState(false);
-  const [connectionSuccess, setConnectionSuccess] = useState<boolean | null>(null);
-  const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [credentials, setCredentials] = useState<SourceCredential[]>([]);
-  const [defaultProvider, setDefaultProvider] = useState<'github' | 'bitbucket'>('github');
-  const [isSaving, setIsSaving] = useState(false);
-  const [isSyncing, setIsSyncing] = useState(false);
+  const [oauthStatus, setOAuthStatus] = useState<OAuthStatus>({
+    github: null,
+    azure: null,
+    bitbucket: null
+  });
   const [isLoading, setIsLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('github');
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  
+  // Azure manual PAT state
+  const [azureOrganization, setAzureOrganization] = useState('');
+  const [azurePat, setAzurePat] = useState('');
+  const [isTestingAzure, setIsTestingAzure] = useState(false);
+  const [isSavingAzure, setIsSavingAzure] = useState(false);
+  
   const { toast } = useToast();
-  
-  const reposPerPage = 10;
-  
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  // Handle OAuth callback results from URL params (fallback)
   useEffect(() => {
-    // Fetch user's source credentials
-    const fetchCredentials = async () => {
+    const success = searchParams.get('success');
+    const error = searchParams.get('error');
+
+    if (success) {
+      toast({
+        title: 'Success!',
+        description: `${success.charAt(0).toUpperCase() + success.slice(1)} connected successfully!`,
+        variant: 'default',
+      });
+      // Clean URL
+      navigate('/api-integrations', { replace: true });
+      fetchOAuthStatus();
+    }
+
+    if (error) {
+      toast({
+        title: 'Connection Failed',
+        description: `Failed to connect: ${error.replace(/_/g, ' ')}`,
+        variant: 'destructive',
+      });
+      // Clean URL
+      navigate('/api-integrations', { replace: true });
+    }
+  }, [searchParams]);
+
+  // Listen for OAuth popup messages
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Verify origin for security
+      if (event.origin !== window.location.origin) return;
+
+      const { type, provider, error } = event.data;
+
+      if (type === 'oauth-success') {
+        toast({
+          title: 'Success!',
+          description: `${provider.charAt(0).toUpperCase() + provider.slice(1)} connected successfully!`,
+        });
+        fetchOAuthStatus();
+      } else if (type === 'oauth-error') {
+        toast({
+          title: 'Connection Failed',
+          description: `Failed to connect: ${error?.replace(/_/g, ' ') || 'Unknown error'}`,
+          variant: 'destructive',
+        });
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  useEffect(() => {
+    fetchOAuthStatus();
+  }, []);
+
+  const fetchOAuthStatus = async () => {
+    try {
       setIsLoading(true);
-      try {
-        const response = await authenticatedRequest('/api/integrations/credentials', {
-          method: 'GET'
-        });
-        
-        if (response.success) {
-          const creds = response.data || [];
-          setCredentials(creds);
-          
-          // Set default provider from credentials if available
-          const defaultCred = creds.find((cred: SourceCredential) => cred.isDefault);
-          if (defaultCred) {
-            setDefaultProvider(defaultCred.provider);
-          }
-          
-          // Pre-load existing credentials
-          const githubCred = creds.find((cred: SourceCredential) => cred.provider === 'github');
-          const bitbucketCred = creds.find((cred: SourceCredential) => cred.provider === 'bitbucket');
-          
-          if (githubCred && githubCred.githubToken) {
-            setGithubToken(githubCred.githubToken);
-            setConnectionSuccess(true);
-          }
-          
-          if (bitbucketCred) {
-            if (bitbucketCred.bitbucketUsername) {
-              setBitbucketUsername(bitbucketCred.bitbucketUsername);
-            }
-            if (bitbucketCred.bitbucketToken) {
-              setBitbucketToken(bitbucketCred.bitbucketToken);
-            }
-            if (bitbucketCred.bitbucketUsername && bitbucketCred.bitbucketToken) {
-              setConnectionSuccess(true);
-            }
-          }
-          
-          // Set active tab based on existing credentials
-          if (defaultCred) {
-            setActiveTab(defaultCred.provider);
-          } else if (githubCred) {
-            setActiveTab('github');
-          } else if (bitbucketCred) {
-            setActiveTab('bitbucket');
-          }
-        }
-      } catch (error) {
-        console.error('Failed to fetch credentials:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load your credentials",
-          variant: "destructive"
-        });
-      } finally {
-        setIsLoading(false);
+      const response = await authenticatedRequest('/api/oauth/status');
+      
+      if (response.success) {
+        setOAuthStatus(response.data);
       }
-    };
-    
-    // Fetch user's repositories
-    const fetchRepositories = async () => {
-      try {
-        const response = await authenticatedRequest('/api/integrations/repositories', {
-          method: 'GET'
-        });
-        
-        if (response.success) {
-          // Sort repositories by connectedAt date (newest first)
-          const sortedRepos = (response.data || []).sort((a, b) => 
-            new Date(b.connectedAt).getTime() - new Date(a.connectedAt).getTime()
-          );
-          setRepositories(sortedRepos);
-        }
-      } catch (error) {
-        console.error('Failed to fetch repositories:', error);
-        toast({
-          title: "Error",
-          description: "Failed to load your repositories",
-          variant: "destructive"
-        });
+    } catch (error) {
+      console.error('Error fetching OAuth status:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to load integration status',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleConnect = async (provider: 'github' | 'azure' | 'bitbucket') => {
+    try {
+      setConnectingProvider(provider);
+      
+      // Get token from localStorage
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('Authentication token missing. Please log in again.');
       }
-    };
-    
-    fetchCredentials();
-    fetchRepositories();
-  }, [toast]);
-  
-  const handleTestConnection = async (provider: 'github' | 'bitbucket') => {
-    if ((provider === 'github' && !githubToken) || 
-        (provider === 'bitbucket' && (!bitbucketUsername || !bitbucketToken))) {
+      
+      // Open OAuth popup with token in query string
+      const width = 600;
+      const height = 700;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      
+      window.open(
+        `/api/oauth/${provider}/connect?token=${encodeURIComponent(token)}`,
+        'OAuth',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+    } catch (error: any) {
+      toast({
+        title: 'Connection Failed',
+        description: error.message || 'Failed to initiate OAuth connection',
+        variant: 'destructive',
+      });
+    } finally {
+      setConnectingProvider(null);
+    }
+  };
+
+  const handleDisconnect = async (provider: 'github' | 'azure' | 'bitbucket') => {
+    try {
+      const response = await authenticatedRequest(`/api/oauth/${provider}/disconnect`, {
+        method: 'DELETE',
+      });
+
+      if (response.success) {
+        toast({
+          title: 'Disconnected',
+          description: `${provider.charAt(0).toUpperCase() + provider.slice(1)} has been disconnected`,
+        });
+        fetchOAuthStatus();
+        // Clear Azure fields if disconnecting Azure
+        if (provider === 'azure') {
+          setAzureOrganization('');
+          setAzurePat('');
+        }
+      }
+    } catch (error: any) {
+      toast({
+        title: 'Error',
+        description: error.message || 'Failed to disconnect',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  // Azure PAT Functions
+  const handleTestAzure = async () => {
+    if (!azureOrganization || !azurePat) {
+      toast({
+        title: 'Missing Information',
+        description: 'Please enter both organization and Personal Access Token',
+        variant: 'destructive',
+      });
       return;
     }
-    
-    setIsTestingConnection(true);
-    setConnectionSuccess(null);
-    
+
+    setIsTestingAzure(true);
     try {
       const response = await authenticatedRequest('/api/integrations/test-connection', {
         method: 'POST',
         body: JSON.stringify({
-          provider,
-          githubToken: provider === 'github' ? githubToken : undefined,
-          bitbucketUsername: provider === 'bitbucket' ? bitbucketUsername : undefined,
-          bitbucketToken: provider === 'bitbucket' ? bitbucketToken : undefined
+          provider: 'azure',
+          azureOrganization,
+          azurePat
         })
       });
-      
-      if (response.success) {
-        setConnectionSuccess(response.data.isValid);
-        
-        if (response.data.isValid) {
-          toast({
-            title: "Connection Successful",
-            description: "Successfully connected to " + (provider === 'github' ? 'GitHub' : 'Bitbucket')
-          });
-        } else {
-          toast({
-            title: "Connection Failed",
-            description: response.data.errorMessage || "Unable to connect to the service",
-            variant: "destructive"
-          });
-        }
-      } else {
-        setConnectionSuccess(false);
+
+      if (response.success && response.data.isValid) {
         toast({
-          title: "Connection Failed",
-          description: response.message || "Unable to connect to the service",
-          variant: "destructive"
+          title: 'Connection Successful!',
+          description: 'Azure DevOps credentials are valid',
+        });
+      } else {
+        toast({
+          title: 'Connection Failed',
+          description: response.data?.errorMessage || 'Invalid credentials',
+          variant: 'destructive',
         });
       }
-    } catch (error) {
-      console.error(`Failed to test ${provider} connection:`, error);
-      setConnectionSuccess(false);
+    } catch (error: any) {
       toast({
-        title: "Connection Error",
-        description: "An error occurred while testing the connection",
-        variant: "destructive"
+        title: 'Test Failed',
+        description: error.message || 'Failed to test connection',
+        variant: 'destructive',
       });
     } finally {
-      setIsTestingConnection(false);
+      setIsTestingAzure(false);
     }
   };
-  
-  const handleSaveCredentials = async (provider: 'github' | 'bitbucket') => {
-    if ((provider === 'github' && !githubToken) || 
-        (provider === 'bitbucket' && (!bitbucketUsername || !bitbucketToken))) {
+
+  const handleSaveAzure = async () => {
+    if (!azureOrganization || !azurePat) {
+      toast({
+        title: 'Missing Information',
+        description: 'Please enter both organization and Personal Access Token',
+        variant: 'destructive',
+      });
       return;
     }
-    
-    setIsSaving(true);
-    
+
+    setIsSavingAzure(true);
     try {
       const response = await authenticatedRequest('/api/integrations/credentials', {
         method: 'POST',
         body: JSON.stringify({
-          provider,
-          githubToken: provider === 'github' ? githubToken : undefined,
-          bitbucketUsername: provider === 'bitbucket' ? bitbucketUsername : undefined,
-          bitbucketToken: provider === 'bitbucket' ? bitbucketToken : undefined,
-          isDefault: provider === defaultProvider
+          provider: 'azure',
+          azureOrganization,
+          azurePat
         })
       });
-      
+
       if (response.success) {
         toast({
-          title: "Success",
-          description: response.message || "Credentials saved successfully",
+          title: 'Success!',
+          description: 'Azure DevOps credentials saved successfully',
         });
-        
-        // Update credentials in state
-        const newCredentials = [...credentials];
-        const existingIndex = newCredentials.findIndex(c => c.provider === provider);
-        
-        if (existingIndex >= 0) {
-          newCredentials[existingIndex] = response.data;
-        } else {
-          newCredentials.push(response.data);
-        }
-        
-        setCredentials(newCredentials);
-        setConnectionSuccess(true);
-      } else {
-        toast({
-          title: "Error",
-          description: response.message || "Failed to save credentials",
-          variant: "destructive"
-        });
+        fetchOAuthStatus();
       }
-    } catch (error) {
-      console.error(`Failed to save ${provider} credentials:`, error);
+    } catch (error: any) {
       toast({
-        title: "Error",
-        description: "An error occurred while saving the credentials",
-        variant: "destructive"
+        title: 'Save Failed',
+        description: error.message || 'Failed to save credentials',
+        variant: 'destructive',
       });
     } finally {
-      setIsSaving(false);
+      setIsSavingAzure(false);
     }
   };
-  
-  const handleSetDefaultProvider = async (provider: 'github' | 'bitbucket') => {
-    // Check if we have credentials for this provider
-    const hasCredentials = credentials.some(c => c.provider === provider);
-    
-    if (!hasCredentials) {
-      toast({
-        title: "Warning",
-        description: `Please add ${provider === 'github' ? 'GitHub' : 'Bitbucket'} credentials first`,
-        variant: "destructive"
-      });
-      return;
+
+  const providers = [
+    {
+      id: 'github',
+      name: 'GitHub',
+      description: 'Connect your GitHub account to scan repositories and pull requests',
+      icon: Github,
+      color: 'from-gray-800 to-black',
+      accentColor: 'border-gray-700',
+      status: oauthStatus.github
+    },
+    {
+      id: 'azure',
+      name: 'Azure DevOps',
+      description: 'Connect Azure DevOps to scan your organization repositories',
+      icon: Cloud,
+      color: 'from-blue-600 to-blue-800',
+      accentColor: 'border-blue-500',
+      status: oauthStatus.azure
+    },
+    {
+      id: 'bitbucket',
+      name: 'Bitbucket',
+      description: 'Connect Bitbucket to analyze your team repositories',
+      icon: () => (
+        <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M.778 1.213a.768.768 0 00-.768.892l3.263 19.81c.084.5.515.868 1.022.873H19.95a.772.772 0 00.77-.646l3.27-20.03a.768.768 0 00-.768-.891zM14.52 15.528H9.522L8.17 8.464h7.561z"/>
+        </svg>
+      ),
+      color: 'from-blue-700 to-blue-900',
+      accentColor: 'border-blue-600',
+      status: oauthStatus.bitbucket
     }
-    
-    setDefaultProvider(provider);
-    
-    // Update default provider in database using the dedicated endpoint
-    try {
-      const response = await authenticatedRequest('/api/integrations/default-provider', {
-        method: 'PATCH',
-        body: JSON.stringify({ provider })
-      });
-      
-      if (response.success) {
-        // Update credentials in state
-        const updatedCredentials = credentials.map(c => ({
-          ...c,
-          isDefault: c.provider === provider
-        }));
-        
-        setCredentials(updatedCredentials);
-        
-        toast({
-          title: "Success",
-          description: `${provider === 'github' ? 'GitHub' : 'Bitbucket'} set as default provider`
-        });
-      } else {
-        toast({
-          title: "Error",
-          description: response.message || "Failed to update default provider",
-          variant: "destructive"
-        });
-      }
-    } catch (error) {
-      console.error('Failed to update default provider:', error);
-      toast({
-        title: "Error",
-        description: "Failed to update default provider",
-        variant: "destructive"
-      });
-    }
-  };
-  
-  const handleToggleRepository = async (id: string, currentStatus: boolean) => {
-    try {
-      const response = await authenticatedRequest(`/api/integrations/repositories/${id}/toggle`, {
-        method: 'PATCH'
-      });
-      
-      if (response.success) {
-        // Update repository in state
-        const updatedRepositories = repositories.map(repo => 
-          repo._id === id ? { ...repo, isEnabled: !currentStatus } : repo
-        );
-        
-        setRepositories(updatedRepositories);
-        
-        toast({
-          title: "Success",
-          description: response.message || "Repository status updated"
-        });
-      }
-    } catch (error) {
-      console.error('Failed to toggle repository status:', error);
-      toast({
-        title: "Error",
-        description: "Failed to update repository status",
-        variant: "destructive"
-      });
-    }
-  };
-  
-  const handleRemoveRepository = async (id: string) => {
-    try {
-      const response = await authenticatedRequest(`/api/integrations/repositories/${id}`, {
-        method: 'DELETE'
-      });
-      
-      if (response.success) {
-        // Remove repository from state
-        setRepositories(repositories.filter(repo => repo._id !== id));
-        setCurrentPage(1); // Reset to first page after deletion
-        
-        toast({
-          title: "Success",
-          description: response.message || "Repository removed successfully"
-        });
-      }
-    } catch (error) {
-      console.error('Failed to remove repository:', error);
-      toast({
-        title: "Error",
-        description: "Failed to remove repository",
-        variant: "destructive"
-      });
-    }
-  };
-  
-  const handleSyncRepositories = async (provider: 'github' | 'bitbucket') => {
-    setIsSyncing(true);
-    
-    try {
-      const response = await authenticatedRequest('/api/integrations/sync-repositories', {
-        method: 'POST',
-        body: JSON.stringify({ provider })
-      });
-      
-      if (response.success) {
-        // Refresh repositories list
-        const repoResponse = await authenticatedRequest('/api/integrations/repositories', {
-          method: 'GET'
-        });
-        
-        if (repoResponse.success) {
-          // Sort repositories by connectedAt date (newest first)
-          const sortedRepos = (repoResponse.data || []).sort((a, b) => 
-            new Date(b.connectedAt).getTime() - new Date(a.connectedAt).getTime()
-          );
-          setRepositories(sortedRepos);
-        }
-        
-        toast({
-          title: "Success",
-          description: response.message || "Repositories synced successfully"
-        });
-      } else {
-        toast({
-          title: "Error",
-          description: response.message || "Failed to sync repositories",
-          variant: "destructive"
-        });
-      }
-    } catch (error) {
-      console.error('Failed to sync repositories:', error);
-      toast({
-        title: "Error",
-        description: "An error occurred while syncing repositories",
-        variant: "destructive"
-      });
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-  
+  ];
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950">
+        <Header />
+        <div className="flex">
+          <Sidebar />
+          <main className="flex-1 p-8">
+            <div className="flex items-center justify-center h-96">
+              <Loader className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar />
-      
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* <Header /> */}
-        
-        <main className="flex-1 overflow-y-auto p-6">
-          <div className="container mx-auto max-w-4xl">
-            <h1 className="text-2xl md:text-3xl font-bold mb-8 text-slate-800">API & Integrations</h1>
-            
-            {isLoading ? (
-              <div className="flex flex-col items-center justify-center p-8">
-                <Loader className="w-8 h-8 animate-spin text-primary mb-2" />
-                <p className="text-muted-foreground">Loading your credentials...</p>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-950">
+      {/* <Header /> */}
+      <div className="flex">
+        <Sidebar />
+        <main className="flex-1 p-8">
+          <div className="max-w-6xl mx-auto space-y-8">
+            {/* Header Section */}
+            <div className="space-y-2">
+              <h1 className="text-4xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                API Integrations
+              </h1>
+              <p className="text-gray-600 dark:text-gray-400 text-lg">
+                Connect your code repositories securely with OAuth. No manual tokens needed.
+              </p>
+            </div>
+
+            {/* Info Banner */}
+            <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4 flex items-start gap-3">
+              <Shield className="w-5 h-5 text-blue-600 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-semibold text-blue-900 dark:text-blue-100">Secure OAuth Authentication</h3>
+                <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                  We use industry-standard OAuth 2.0 to connect your accounts. We never see or store your passwords.
+                </p>
               </div>
-            ) : (
-              <div className="space-y-8">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Default Repository Provider</CardTitle>
-                    <CardDescription>
-                      Select your preferred repository provider for new projects
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-center space-x-4">
-                      <Button
-                        variant={defaultProvider === 'github' ? 'default' : 'outline'}
-                        onClick={() => handleSetDefaultProvider('github')}
-                        className="flex items-center space-x-2"
-                      >
-                        <Github className="h-4 w-4" />
-                        <span>GitHub</span>
-                      </Button>
-                      <Button
-                        variant={defaultProvider === 'bitbucket' ? 'default' : 'outline'}
-                        onClick={() => handleSetDefaultProvider('bitbucket')}
-                        className="flex items-center space-x-2"
-                      >
-                        <GitBranch className="h-4 w-4" />
-                        <span>Bitbucket</span>
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-                
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Repository Access</CardTitle>
-                    <CardDescription>
-                      Connect your Git repositories to enable automatic code scanning
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Tabs defaultValue={activeTab} value={activeTab} onValueChange={setActiveTab}>
-                      <TabsList className="mb-6">
-                        <TabsTrigger value="github" className="flex items-center">
-                          <Github className="h-4 w-4 mr-2" />
-                          GitHub
-                        </TabsTrigger>
-                        <TabsTrigger value="bitbucket" className="flex items-center">
-                          <GitBranch className="h-4 w-4 mr-2" />
-                          Bitbucket
-                        </TabsTrigger>
-                      </TabsList>
-                      
-                      <TabsContent value="github" className="space-y-6">
-                        <div>
-                          <h3 className="font-semibold mb-4">Connect GitHub Account</h3>
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="github-token">Personal Access Token</Label>
-                              <div className="flex">
-                                <Input 
-                                  id="github-token" 
-                                  type="password" 
-                                  value={githubToken}
-                                  onChange={(e) => setGithubToken(e.target.value)}
-                                  placeholder="GitHub Personal Access Token"
-                                  className="flex-1 rounded-r-none"
-                                />
-                                <Button 
-                                  onClick={() => handleTestConnection('github')}
-                                  disabled={!githubToken || isTestingConnection}
-                                  className="rounded-l-none rounded-r-none border-l-0 border-r-0"
-                                >
-                                  {isTestingConnection ? (
-                                    "Testing..."
-                                  ) : connectionSuccess === true && activeTab === 'github' ? (
-                                    <>
-                                      <Check className="h-4 w-4 mr-2" />
-                                      Connected
-                                    </>
-                                  ) : (
-                                    "Test"
-                                  )}
-                                </Button>
-                                <Button 
-                                  onClick={() => handleSaveCredentials('github')}
-                                  disabled={!githubToken || isSaving || (connectionSuccess === false && activeTab === 'github')}
-                                  className="rounded-l-none"
-                                >
-                                  {isSaving ? "Saving..." : "Save"}
-                                </Button>
-                              </div>
-                              <p className="text-sm text-slate-500">
-                                The token requires <code>repo</code> and <code>read:user</code> permissions.
-                                <a href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token" 
-                                  className="text-indigo-600 hover:text-indigo-500 ml-1"
-                                  target="_blank" rel="noopener noreferrer"
-                                >
-                                  Learn how to generate a token
-                                </a>
-                              </p>
-                            </div>
-                            
-                            <div className="flex justify-end">
-                              <Button 
-                                variant="outline"
-                                onClick={() => handleSyncRepositories('github')}
-                                disabled={isSyncing || !credentials.some(c => c.provider === 'github')}
-                                className="flex items-center space-x-2"
-                              >
-                                <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
-                                <span>Sync Repositories</span>
-                              </Button>
-                            </div>
-                          </div>
+            </div>
+
+            {/* Provider Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {providers.map((provider) => {
+                const isConnected = provider.status?.connected || false;
+                const isConnecting = connectingProvider === provider.id;
+                const Icon = provider.icon;
+
+                return (
+                  <Card 
+                    key={provider.id}
+                    className={`relative overflow-hidden transition-all duration-300 hover:shadow-xl border-2 ${
+                      isConnected ? provider.accentColor : 'border-gray-200 dark:border-gray-800'
+                    }`}
+                  >
+                    {/* Status Badge */}
+                    {isConnected && (
+                      <div className="absolute top-4 right-4">
+                        <div className="flex items-center gap-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 px-2 py-1 rounded-full text-xs font-medium">
+                          <Check className="w-3 h-3" />
+                          Connected
                         </div>
-                      </TabsContent>
-                      
-                      <TabsContent value="bitbucket" className="space-y-6">
-                        <div>
-                          <h3 className="font-semibold mb-4">Connect Bitbucket Account</h3>
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="bitbucket-username">Username</Label>
-                              <Input 
-                                id="bitbucket-username" 
-                                value={bitbucketUsername}
-                                onChange={(e) => setBitbucketUsername(e.target.value)}
-                                placeholder="Bitbucket Username"
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="bitbucket-token">App Password</Label>
-                              <div className="flex">
-                                <Input 
-                                  id="bitbucket-token" 
-                                  type="password" 
-                                  value={bitbucketToken}
-                                  onChange={(e) => setBitbucketToken(e.target.value)}
-                                  placeholder="Bitbucket App Password"
-                                  className="flex-1 rounded-r-none"
-                                />
-                                <Button 
-                                  onClick={() => handleTestConnection('bitbucket')}
-                                  disabled={!bitbucketUsername || !bitbucketToken || isTestingConnection}
-                                  className="rounded-l-none rounded-r-none border-l-0 border-r-0"
-                                >
-                                  {isTestingConnection ? (
-                                    "Testing..."
-                                  ) : connectionSuccess === true && activeTab === 'bitbucket' ? (
-                                    <>
-                                      <Check className="h-4 w-4 mr-2" />
-                                      Connected
-                                    </>
-                                  ) : connectionSuccess === false && activeTab === 'bitbucket' ? (
-                                    <>
-                                      <X className="h-4 w-4 mr-2" />
-                                      Failed
-                                    </>
-                                  ) : (
-                                    "Test"
-                                  )}
-                                </Button>
-                                <Button 
-                                  onClick={() => handleSaveCredentials('bitbucket')}
-                                  disabled={!bitbucketUsername || !bitbucketToken || isSaving || (connectionSuccess === false && activeTab === 'bitbucket')}
-                                  className="rounded-l-none"
-                                >
-                                  {isSaving ? "Saving..." : "Save"}
-                                </Button>
-                              </div>
-                              <p className="text-sm text-slate-500">
-                                The app password requires <code>repositories:read</code> permissions.
-                              </p>
-                            </div>
-                            
-                            <div className="flex justify-end">
-                              <Button 
-                                variant="outline"
-                                onClick={() => handleSyncRepositories('bitbucket')}
-                                disabled={isSyncing || !credentials.some(c => c.provider === 'bitbucket')}
-                                className="flex items-center space-x-2"
-                              >
-                                <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
-                                <span>Sync Repositories</span>
-                              </Button>
-                            </div>
-                          </div>
-                        </div>
-                      </TabsContent>
-                    </Tabs>
-                  </CardContent>
-                </Card>
-                
-                {repositories.length > 0 && (
-                  <Card>
+                      </div>
+                    )}
+
                     <CardHeader>
-                      <CardTitle>Connected Repositories</CardTitle>
-                      <CardDescription>
-                        Manage repositories that are connected to CodeSentinel
+                      <div className={`w-16 h-16 rounded-xl bg-gradient-to-br ${provider.color} flex items-center justify-center text-white mb-4 shadow-lg`}>
+                        <Icon className="w-8 h-8" />
+                      </div>
+                      <CardTitle className="text-xl">{provider.name}</CardTitle>
+                      <CardDescription className="min-h-[48px]">
+                        {provider.description}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <div className="space-y-4">
-                        {/* Apply pagination to repositories */}
-                        {repositories
-                          .slice((currentPage - 1) * reposPerPage, currentPage * reposPerPage)
-                          .map(repo => (
-                          <div key={repo._id} className="flex items-center justify-between p-4 bg-gray-50 rounded-md">
-                            <div className="flex items-center">
-                              {repo.provider === 'github' ? (
-                                <Github className="h-5 w-5 mr-3 text-slate-700" />
-                              ) : (
-                                <GitBranch className="h-5 w-5 mr-3 text-slate-700" />
-                              )}
-                              <div>
-                                <p className="font-medium">{repo.name}</p>
-                                <p className="text-sm text-slate-500">
-                                  Connected: {new Date(repo.connectedAt).toLocaleDateString()}
-                                  {repo.lastScanDate && ` | Last scanned: ${new Date(repo.lastScanDate).toLocaleDateString()}`}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-4">
-                              <div className="flex items-center space-x-2">
-                                <Switch 
-                                  id={`repo-${repo._id}`}
-                                  checked={repo.isEnabled}
-                                  onCheckedChange={() => handleToggleRepository(repo._id, repo.isEnabled)}
-                                />
-                                <Label htmlFor={`repo-${repo._id}`} className="cursor-pointer">
-                                  {repo.isEnabled ? 'Enabled' : 'Disabled'}
-                                </Label>
-                              </div>
-                              <AlertDialog>
-                                <AlertDialogTrigger asChild>
-                                  <Button variant="ghost" size="icon">
-                                    <Trash className="h-4 w-4 text-slate-500" />
-                                  </Button>
-                                </AlertDialogTrigger>
-                                <AlertDialogContent>
-                                  <AlertDialogHeader>
-                                    <AlertDialogTitle>Remove Repository</AlertDialogTitle>
-                                    <AlertDialogDescription>
-                                      Are you sure you want to remove {repo.name}? This will delete all scan history and findings for this repository.
-                                    </AlertDialogDescription>
-                                  </AlertDialogHeader>
-                                  <AlertDialogFooter>
-                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                    <AlertDialogAction onClick={() => handleRemoveRepository(repo._id)}>
-                                      Remove
-                                    </AlertDialogAction>
-                                  </AlertDialogFooter>
-                                </AlertDialogContent>
-                              </AlertDialog>
-                            </div>
-                          </div>
-                        ))}
-                        
-                        {/* Pagination controls */}
-                        {repositories.length > reposPerPage && (
-                          <div className="flex justify-center mt-4 space-x-2">
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                              disabled={currentPage === 1}
-                            >
-                              Previous
-                            </Button>
-                            <div className="flex items-center px-4">
-                              <span className="text-sm">
-                                Page {currentPage} of {Math.ceil(repositories.length / reposPerPage)}
+
+                    <CardContent className="space-y-4">
+                      {isConnected && provider.status ? (
+                        <div className="space-y-3">
+                          <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 space-y-2">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="text-gray-600 dark:text-gray-400">Username:</span>
+                              <span className="font-medium text-gray-900 dark:text-gray-100">
+                                {provider.status.username || 'N/A'}
                               </span>
                             </div>
-                            <Button 
-                              variant="outline" 
-                              size="sm"
-                              onClick={() => setCurrentPage(p => Math.min(Math.ceil(repositories.length / reposPerPage), p + 1))}
-                              disabled={currentPage >= Math.ceil(repositories.length / reposPerPage)}
-                            >
-                              Next
-                            </Button>
+                            {provider.status.email && (
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-gray-600 dark:text-gray-400">Email:</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100 truncate ml-2">
+                                  {provider.status.email}
+                                </span>
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
+
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button 
+                                variant="outline" 
+                                className="w-full border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                              >
+                                <X className="w-4 h-4 mr-2" />
+                                Disconnect
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Disconnect {provider.name}?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  This will remove access to your {provider.name} repositories. You can reconnect anytime.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction
+                                  onClick={() => handleDisconnect(provider.id as any)}
+                                  className="bg-red-600 hover:bg-red-700"
+                                >
+                                  Disconnect
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
+                      ) : (
+                        <Button
+                          onClick={() => handleConnect(provider.id as any)}
+                          disabled={isConnecting}
+                          className={`w-full bg-gradient-to-r ${provider.color} hover:opacity-90 text-white shadow-lg`}
+                        >
+                          {isConnecting ? (
+                            <>
+                              <Loader className="w-4 h-4 mr-2 animate-spin" />
+                              Connecting...
+                            </>
+                          ) : (
+                            <>
+                              <ExternalLink className="w-4 h-4 mr-2" />
+                              Connect {provider.name}
+                            </>
+                          )}
+                        </Button>
+                      )}
                     </CardContent>
                   </Card>
-                )}
-              </div>
-            )}
+                );
+              })}
+            </div>
+
+            {/* Help Section */}
+            <Card className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-950/20 dark:to-blue-950/20 border-purple-200 dark:border-purple-800">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertCircle className="w-5 h-5 text-purple-600" />
+                  Need Help?
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm text-gray-700 dark:text-gray-300">
+                <p>
+                  <strong>Why OAuth?</strong> OAuth is more secure than using personal access tokens. It gives you granular control over permissions.
+                </p>
+                <p>
+                  <strong>What permissions do we request?</strong> We only request read access to your repositories and profile information.
+                </p>
+                <p>
+                  <strong>Can I revoke access?</strong> Yes! You can disconnect anytime here, or revoke access from your provider's settings.
+                </p>
+              </CardContent>
+            </Card>
           </div>
         </main>
       </div>

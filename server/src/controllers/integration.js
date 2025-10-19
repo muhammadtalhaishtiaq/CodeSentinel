@@ -3,6 +3,7 @@ const Repository = require('../models/Repository');
 const path = require('path');
 const fs = require('fs/promises');
 const fetch = require('node-fetch');
+const { getAccessToken } = require('./oauth');
 
 // @desc    Get user's source credentials
 // @route   GET /api/integrations/credentials
@@ -79,7 +80,7 @@ exports.getSourceCredentialById = async(req, res, next) => {
 // @access  Private
 exports.addSourceCredential = async(req, res, next) => {
     try {
-        const { provider, githubToken, bitbucketUsername, bitbucketToken, isDefault } = req.body;
+        const { provider, githubToken, bitbucketUsername, bitbucketToken, azureOrganization, azurePat, isDefault } = req.body;
 
         if (!provider) {
             return res.status(400).json({
@@ -106,6 +107,13 @@ exports.addSourceCredential = async(req, res, next) => {
                     message: 'Bitbucket username and token are required'
                 });
             }
+
+            if (provider === 'azure' && (!azureOrganization || !azurePat)) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Azure organization and Personal Access Token are required'
+                });
+            }
         }
 
         // Check if credentials already exist for this provider
@@ -125,6 +133,15 @@ exports.addSourceCredential = async(req, res, next) => {
                 } else if (provider === 'bitbucket') {
                     existingCredential.bitbucketUsername = bitbucketUsername;
                     existingCredential.bitbucketToken = bitbucketToken;
+                } else if (provider === 'azure') {
+                    // Clean organization name (remove URL if present)
+                    let cleanOrg = azureOrganization.trim();
+                    if (cleanOrg.includes('dev.azure.com/')) {
+                        cleanOrg = cleanOrg.split('dev.azure.com/')[1].split('/')[0];
+                    }
+                    existingCredential.azureOrganization = cleanOrg;
+                    existingCredential.azurePat = azurePat;
+                    existingCredential.providerUsername = cleanOrg; // For display
                 }
             }
 
@@ -154,6 +171,15 @@ exports.addSourceCredential = async(req, res, next) => {
             } else if (provider === 'bitbucket') {
                 credentialData.bitbucketUsername = bitbucketUsername;
                 credentialData.bitbucketToken = bitbucketToken;
+            } else if (provider === 'azure') {
+                // Clean organization name (remove URL if present)
+                let cleanOrg = azureOrganization.trim();
+                if (cleanOrg.includes('dev.azure.com/')) {
+                    cleanOrg = cleanOrg.split('dev.azure.com/')[1].split('/')[0];
+                }
+                credentialData.azureOrganization = cleanOrg;
+                credentialData.azurePat = azurePat;
+                credentialData.providerUsername = cleanOrg; // For display
             }
 
             credential = await SourceCredential.create(credentialData);
@@ -169,6 +195,8 @@ exports.addSourceCredential = async(req, res, next) => {
                 githubToken: credential.provider === 'github' ? credential.githubToken : undefined,
                 bitbucketUsername: credential.provider === 'bitbucket' ? credential.bitbucketUsername : undefined,
                 bitbucketToken: credential.provider === 'bitbucket' ? credential.bitbucketToken : undefined,
+                azureOrganization: credential.provider === 'azure' ? credential.azureOrganization : undefined,
+                azurePat: credential.provider === 'azure' ? credential.azurePat : undefined,
                 createdAt: credential.createdAt,
                 updatedAt: credential.updatedAt
             },
@@ -187,13 +215,15 @@ exports.addSourceCredential = async(req, res, next) => {
 // @access  Private
 exports.testConnection = async(req, res, next) => {
     try {
-        const { provider, githubToken, bitbucketUsername, bitbucketToken } = req.body;
+        const { provider, githubToken, bitbucketUsername, bitbucketToken, azureOrganization, azurePat } = req.body;
         console.log(`[DEBUG] Validating integration for provider: ${provider}`);
         console.log(`[DEBUG] Request body:`, JSON.stringify({
             provider,
             githubToken: githubToken ? '***token-redacted***' : undefined,
             bitbucketUsername,
-            bitbucketToken: bitbucketToken ? '***token-redacted***' : undefined
+            bitbucketToken: bitbucketToken ? '***token-redacted***' : undefined,
+            azureOrganization,
+            azurePat: azurePat ? '***token-redacted***' : undefined
         }));
 
         if (!provider) {
@@ -291,6 +321,58 @@ exports.testConnection = async(req, res, next) => {
             } catch (error) {
                 errorMessage = error.message || 'Failed to connect to Bitbucket API';
                 console.log(`[DEBUG] Bitbucket API connection error: ${error.message}`);
+                console.log(error);
+            }
+        } else if (provider === 'azure') {
+            if (!azureOrganization || !azurePat) {
+                console.log('[DEBUG] Error: Azure credentials incomplete');
+                return res.status(400).json({
+                    success: false,
+                    message: 'Azure organization and Personal Access Token are required'
+                });
+            }
+
+            try {
+                console.log('[DEBUG] Testing Azure credentials by calling Azure DevOps API...');
+                // Clean organization name
+                let cleanOrg = azureOrganization.trim();
+                if (cleanOrg.includes('dev.azure.com/')) {
+                    cleanOrg = cleanOrg.split('dev.azure.com/')[1].split('/')[0];
+                }
+                
+                // Test Azure DevOps credentials by fetching projects
+                const authHeader = 'Basic ' + Buffer.from(`:${azurePat}`).toString('base64');
+                const testUrl = `https://dev.azure.com/${cleanOrg}/_apis/projects?api-version=7.0`;
+                const response = await fetch(testUrl, {
+                    method: 'GET',
+                    headers: {
+                        Authorization: authHeader,
+                        Accept: 'application/json'
+                    }
+                });
+
+                console.log(`[DEBUG] Azure API response status: ${response.status}`);
+                const responseText = await response.text();
+                console.log(`[DEBUG] Azure API response body: ${responseText}`);
+
+                let responseData;
+                try {
+                    responseData = JSON.parse(responseText);
+                } catch (e) {
+                    console.log('[DEBUG] Failed to parse Azure response as JSON');
+                }
+
+                if (response.ok) {
+                    const projectCount = responseData && responseData.count !== undefined ? responseData.count : 0;
+                    console.log(`[DEBUG] Azure validation successful. Projects found: ${projectCount}`);
+                    isValid = true;
+                } else {
+                    errorMessage = (responseData && responseData.message) ? responseData.message : 'Failed to connect to Azure DevOps API';
+                    console.log(`[DEBUG] Azure validation failed: ${errorMessage}`);
+                }
+            } catch (error) {
+                errorMessage = error.message || 'Failed to connect to Azure DevOps API';
+                console.log(`[DEBUG] Azure API connection error: ${error.message}`);
                 console.log(error);
             }
         } else {
@@ -424,13 +506,22 @@ exports.syncRepositories = async(req, res, next) => {
 
         let repositories = [];
 
+        const accessToken = getAccessToken(credential);
+
+        if (!accessToken) {
+            return res.status(401).json({
+                success: false,
+                message: 'No valid access token found. Please reconnect your account.'
+            });
+        }
+
         if (provider === 'github') {
             try {
                 // Fetch GitHub repositories
                 const response = await fetch('https://api.github.com/user/repos?per_page=100', {
                     method: 'GET',
                     headers: {
-                        Authorization: `token ${credential.githubToken}`,
+                        Authorization: `token ${accessToken}`,
                         Accept: 'application/vnd.github.v3+json'
                     }
                 });
@@ -453,6 +544,62 @@ exports.syncRepositories = async(req, res, next) => {
                 return res.status(500).json({
                     success: false,
                     message: error.message || 'Failed to fetch GitHub repositories'
+                });
+            }
+        } else if (provider === 'azure') {
+            try {
+                // Fetch Azure DevOps organizations
+                const orgsResponse = await fetch('https://app.vssps.visualstudio.com/_apis/accounts?api-version=6.0', {
+                    headers: {
+                        Authorization: `Bearer ${accessToken}`
+                    }
+                });
+
+                if (!orgsResponse.ok) {
+                    throw new Error('Failed to fetch Azure DevOps organizations');
+                }
+
+                const orgs = await orgsResponse.json();
+
+                // Fetch projects for each organization
+                for (const org of orgs.value) {
+                    const projectsResponse = await fetch(`https://dev.azure.com/${org.accountName}/_apis/projects?api-version=6.0`, {
+                        headers: {
+                            Authorization: `Bearer ${accessToken}`
+                        }
+                    });
+
+                    if (projectsResponse.ok) {
+                        const projectsData = await projectsResponse.json();
+                        
+                        // Fetch repos for each project
+                        for (const project of projectsData.value) {
+                            const reposResponse = await fetch(
+                                `https://dev.azure.com/${org.accountName}/${project.id}/_apis/git/repositories?api-version=6.0`,
+                                {
+                                    headers: {
+                                        Authorization: `Bearer ${accessToken}`
+                                    }
+                                }
+                            );
+
+                            if (reposResponse.ok) {
+                                const reposData = await reposResponse.json();
+                                reposData.value.forEach(repo => {
+                                    repositories.push({
+                                        name: `${org.accountName}/${project.name}/${repo.name}`,
+                                        repoId: repo.id,
+                                        provider: 'azure'
+                                    });
+                                });
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                return res.status(500).json({
+                    success: false,
+                    message: error.message || 'Failed to fetch Azure DevOps repositories'
                 });
             }
         } else if (provider === 'bitbucket') {

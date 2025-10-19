@@ -9,7 +9,6 @@ const {
     getLatestScan,
     startScan
 } = require('../controllers/project');
-const { getRecentProjects } = require('../controllers/projects');
 const { protect } = require('../middleware/auth');
 const { getChatHistory, sendMessage } = require('../controllers/chat');
 
@@ -22,9 +21,6 @@ router.use(protect);
 router.route('/')
     .get(getProjects)
     .post(createProject);
-
-// IMPORTANT: /recent must come BEFORE /:id to avoid "recent" being treated as an ID
-router.get('/recent', getRecentProjects);
 
 router.route('/:id')
     .get(getProject)

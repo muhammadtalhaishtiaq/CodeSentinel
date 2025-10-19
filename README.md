@@ -1,45 +1,6 @@
 # CodeSentinel
 
-A modern AI-powered code security analysis platform built with MERN stack (MongoDB, Express, React, Node.js).
-
-## Quick Start
-
-```bash
-# 1. Install dependencies
-npm install
-
-# 2. Start development (runs both frontend & backend)
-npm run dev
-```
-
-- **Frontend:** http://localhost:5173
-- **Backend:** http://localhost:8080
-
-## Environment Setup
-
-Create `.env.development` in root:
-
-```env
-NODE_ENV=development
-PORT=8080
-MONGODB_URI=mongodb://localhost:27017/code_sentinel
-JWT_SECRET=your_secret_key_change_this
-JWT_EXPIRE=24h
-AIMLAPI_KEY=0a1961ec336d4c14bb852f50b54fe191
-```
-
-## Production Deployment
-
-```bash
-# Build frontend
-npm run build
-
-# Start production server
-npm start
-```
-
-The backend will serve the built frontend from `/dist` folder.
-
+A modern code security analysis platform built with MERN stack (MongoDB, Express, React, Node.js).
 ## Project info
 ![image](https://github.com/user-attachments/assets/839b6385-36e9-4367-9a6b-9080bf1c746e)
 

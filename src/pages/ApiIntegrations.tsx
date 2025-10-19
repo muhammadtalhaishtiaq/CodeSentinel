@@ -26,10 +26,6 @@ interface SourceCredential {
   provider: 'github' | 'bitbucket';
   isDefault: boolean;
   isActive: boolean;
-  authType?: 'manual' | 'oauth';
-  providerUsername?: string;
-  providerEmail?: string;
-  isConnected?: boolean;
   githubToken?: string;
   bitbucketUsername?: string;
   bitbucketToken?: string;
@@ -410,165 +406,6 @@ const ApiIntegrations = () => {
     }
   };
   
-  // OAuth Login Handler
-  const handleOAuthLogin = (provider: 'github') => {
-    // Get token from localStorage
-    const token = localStorage.getItem('token');
-    
-    if (!token) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in again",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    // Open popup window for OAuth
-    const width = 600;
-    const height = 700;
-    const left = (window.innerWidth - width) / 2;
-    const top = (window.innerHeight - height) / 2;
-    
-    // Include token in URL query parameter
-    const popup = window.open(
-      `/api/oauth/${provider}?token=${encodeURIComponent(token)}`,
-      `OAuth Login - ${provider}`,
-      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
-    );
-    
-    if (!popup) {
-      toast({
-        title: "Popup Blocked",
-        description: "Please allow popups for this site to connect via OAuth",
-        variant: "destructive"
-      });
-      return;
-    }
-    
-    // Listen for OAuth success/error messages
-    const messageHandler = (event: MessageEvent) => {
-      // Validate origin for security (allow both possible dev ports)
-      const allowedOrigins = [
-        window.location.origin,
-        'http://localhost:5173',
-        'http://localhost:5174'
-      ];
-      
-      if (!allowedOrigins.includes(event.origin)) {
-        console.warn('[OAuth] Rejected message from invalid origin:', event.origin);
-        return;
-      }
-      
-      const { type, provider: eventProvider, username, email, error, message } = event.data;
-      
-      if (type === 'oauth-success' && eventProvider === provider) {
-        // Success! Refresh credentials
-        toast({
-          title: "Connected!",
-          description: `Successfully connected to ${provider}${username ? ` as @${username}` : ''}`,
-        });
-        
-        // Refresh credentials list
-        setTimeout(async () => {
-          try {
-            const response = await authenticatedRequest('/api/integrations/credentials', {
-              method: 'GET'
-            });
-            
-            if (response.success) {
-              const creds = response.data || [];
-              setCredentials(creds);
-            }
-          } catch (error) {
-            console.error('Failed to refresh credentials:', error);
-          }
-        }, 500);
-        
-        // Close popup if still open
-        if (popup && !popup.closed) {
-          popup.close();
-        }
-        
-        // Remove listener
-        window.removeEventListener('message', messageHandler);
-        
-      } else if (type === 'oauth-error' && eventProvider === provider) {
-        // Error occurred
-        let errorMessage = message || 'Authentication failed';
-        
-        if (error === 'access_denied') {
-          errorMessage = 'You denied access. Please try again and approve the permissions.';
-        } else if (error === 'invalid_state') {
-          errorMessage = 'Security validation failed. Please try again.';
-        }
-        
-        toast({
-          title: "Connection Failed",
-          description: errorMessage,
-          variant: "destructive"
-        });
-        
-        // Close popup if still open
-        if (popup && !popup.closed) {
-          popup.close();
-        }
-        
-        // Remove listener
-        window.removeEventListener('message', messageHandler);
-      }
-    };
-    
-    window.addEventListener('message', messageHandler);
-    
-    // Clean up listener if popup is closed manually
-    const checkPopup = setInterval(() => {
-      if (popup.closed) {
-        window.removeEventListener('message', messageHandler);
-        clearInterval(checkPopup);
-      }
-    }, 1000);
-  };
-  
-  // Disconnect OAuth Account
-  const handleDisconnectOAuth = async (provider: 'github') => {
-    try {
-      const response = await authenticatedRequest(`/api/oauth/${provider}/disconnect`, {
-        method: 'DELETE'
-      });
-      
-      if (response.success) {
-        toast({
-          title: "Disconnected",
-          description: `${provider} account has been disconnected`,
-        });
-        
-        // Refresh credentials
-        const credsResponse = await authenticatedRequest('/api/integrations/credentials', {
-          method: 'GET'
-        });
-        
-        if (credsResponse.success) {
-          const creds = credsResponse.data || [];
-          setCredentials(creds);
-        }
-      } else {
-        toast({
-          title: "Error",
-          description: response.message || "Failed to disconnect account",
-          variant: "destructive"
-        });
-      }
-    } catch (error) {
-      console.error('Failed to disconnect OAuth:', error);
-      toast({
-        title: "Error",
-        description: "An error occurred while disconnecting",
-        variant: "destructive"
-      });
-    }
-  };
-  
   return (
     <div className="flex h-screen bg-gray-50">
       <Sidebar />
@@ -637,149 +474,68 @@ const ApiIntegrations = () => {
                       </TabsList>
                       
                       <TabsContent value="github" className="space-y-6">
-                        {(() => {
-                          const githubCred = credentials.find(c => c.provider === 'github');
-                          const isOAuthConnected = githubCred?.authType === 'oauth' && githubCred?.isConnected;
-                          
-                          return (
-                            <div>
-                              <h3 className="font-semibold mb-4">Connect GitHub Account</h3>
-                              <div className="space-y-6">
-                                {/* OAuth Connection (Recommended) */}
-                                {!isOAuthConnected ? (
-                                  <div className="p-6 border-2 border-indigo-200 bg-indigo-50 rounded-lg">
-                                    <div className="flex items-start space-x-4">
-                                      <div className="flex-shrink-0">
-                                        <div className="h-12 w-12 rounded-full bg-indigo-600 flex items-center justify-center">
-                                          <Github className="h-6 w-6 text-white" />
-                                        </div>
-                                      </div>
-                                      <div className="flex-1">
-                                        <h4 className="text-lg font-semibold text-indigo-900 mb-1">
-                                          Recommended: OAuth Connection
-                                        </h4>
-                                        <p className="text-sm text-indigo-700 mb-4">
-                                          One-click secure authentication with GitHub. No manual token needed!
-                                        </p>
-                                        <Button
-                                          onClick={() => handleOAuthLogin('github')}
-                                          className="bg-indigo-600 hover:bg-indigo-700"
-                                        >
-                                          <Github className="h-4 w-4 mr-2" />
-                                          Connect with GitHub
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="p-6 border-2 border-green-200 bg-green-50 rounded-lg">
-                                    <div className="flex items-start justify-between">
-                                      <div className="flex items-start space-x-4">
-                                        <div className="flex-shrink-0">
-                                          <div className="h-12 w-12 rounded-full bg-green-600 flex items-center justify-center">
-                                            <Check className="h-6 w-6 text-white" />
-                                          </div>
-                                        </div>
-                                        <div>
-                                          <h4 className="text-lg font-semibold text-green-900 mb-1">
-                                            Connected via OAuth
-                                          </h4>
-                                          <p className="text-sm text-green-700">
-                                            Connected as <strong>@{githubCred.providerUsername}</strong>
-                                            {githubCred.providerEmail && ` (${githubCred.providerEmail})`}
-                                          </p>
-                                          <p className="text-xs text-green-600 mt-1">
-                                            Last updated: {new Date(githubCred.updatedAt).toLocaleDateString()}
-                                          </p>
-                                        </div>
-                                      </div>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => handleDisconnectOAuth('github')}
-                                        className="text-red-600 border-red-300 hover:bg-red-50"
-                                      >
-                                        Disconnect
-                                      </Button>
-                                    </div>
-                                  </div>
-                                )}
-                                
-                                {/* Manual Token (Fallback) */}
-                                {!isOAuthConnected && (
-                                  <div className="space-y-4">
-                                    <div className="flex items-center space-x-2 text-sm text-slate-500">
-                                      <div className="flex-1 border-t"></div>
-                                      <span>OR use Personal Access Token</span>
-                                      <div className="flex-1 border-t"></div>
-                                    </div>
-                                    
-                                    <div className="space-y-2">
-                                      <Label htmlFor="github-token">Personal Access Token (Manual)</Label>
-                                      <div className="flex">
-                                        <Input 
-                                          id="github-token" 
-                                          type="password" 
-                                          value={githubToken}
-                                          onChange={(e) => setGithubToken(e.target.value)}
-                                          placeholder="GitHub Personal Access Token"
-                                          className="flex-1 rounded-r-none"
-                                        />
-                                        <Button 
-                                          onClick={() => handleTestConnection('github')}
-                                          disabled={!githubToken || isTestingConnection}
-                                          className="rounded-l-none rounded-r-none border-l-0 border-r-0"
-                                        >
-                                          {isTestingConnection ? (
-                                            "Testing..."
-                                          ) : connectionSuccess === true && activeTab === 'github' ? (
-                                            <>
-                                              <Check className="h-4 w-4 mr-2" />
-                                              Connected
-                                            </>
-                                          ) : (
-                                            "Test"
-                                          )}
-                                        </Button>
-                                        <Button 
-                                          onClick={() => handleSaveCredentials('github')}
-                                          disabled={!githubToken || isSaving || (connectionSuccess === false && activeTab === 'github')}
-                                          className="rounded-l-none"
-                                        >
-                                          {isSaving ? "Saving..." : "Save"}
-                                        </Button>
-                                      </div>
-                                      <p className="text-sm text-slate-500">
-                                        The token requires <code>repo</code> and <code>read:user</code> permissions.
-                                        <a href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token" 
-                                          className="text-indigo-600 hover:text-indigo-500 ml-1"
-                                          target="_blank" rel="noopener noreferrer"
-                                        >
-                                          Learn how to generate a token
-                                        </a>
-                                      </p>
-                                    </div>
-                                  </div>
-                                )}
-                                
-                                {/* Sync Repositories Button */}
-                                {(isOAuthConnected || credentials.some(c => c.provider === 'github')) && (
-                                  <div className="flex justify-end pt-4 border-t">
-                                    <Button 
-                                      variant="outline"
-                                      onClick={() => handleSyncRepositories('github')}
-                                      disabled={isSyncing}
-                                      className="flex items-center space-x-2"
-                                    >
-                                      <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
-                                      <span>Sync Repositories</span>
-                                    </Button>
-                                  </div>
-                                )}
+                        <div>
+                          <h3 className="font-semibold mb-4">Connect GitHub Account</h3>
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="github-token">Personal Access Token</Label>
+                              <div className="flex">
+                                <Input 
+                                  id="github-token" 
+                                  type="password" 
+                                  value={githubToken}
+                                  onChange={(e) => setGithubToken(e.target.value)}
+                                  placeholder="GitHub Personal Access Token"
+                                  className="flex-1 rounded-r-none"
+                                />
+                                <Button 
+                                  onClick={() => handleTestConnection('github')}
+                                  disabled={!githubToken || isTestingConnection}
+                                  className="rounded-l-none rounded-r-none border-l-0 border-r-0"
+                                >
+                                  {isTestingConnection ? (
+                                    "Testing..."
+                                  ) : connectionSuccess === true && activeTab === 'github' ? (
+                                    <>
+                                      <Check className="h-4 w-4 mr-2" />
+                                      Connected
+                                    </>
+                                  ) : (
+                                    "Test"
+                                  )}
+                                </Button>
+                                <Button 
+                                  onClick={() => handleSaveCredentials('github')}
+                                  disabled={!githubToken || isSaving || (connectionSuccess === false && activeTab === 'github')}
+                                  className="rounded-l-none"
+                                >
+                                  {isSaving ? "Saving..." : "Save"}
+                                </Button>
                               </div>
+                              <p className="text-sm text-slate-500">
+                                The token requires <code>repo</code> and <code>read:user</code> permissions.
+                                <a href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token" 
+                                  className="text-indigo-600 hover:text-indigo-500 ml-1"
+                                  target="_blank" rel="noopener noreferrer"
+                                >
+                                  Learn how to generate a token
+                                </a>
+                              </p>
                             </div>
-                          );
-                        })()}
+                            
+                            <div className="flex justify-end">
+                              <Button 
+                                variant="outline"
+                                onClick={() => handleSyncRepositories('github')}
+                                disabled={isSyncing || !credentials.some(c => c.provider === 'github')}
+                                className="flex items-center space-x-2"
+                              >
+                                <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
+                                <span>Sync Repositories</span>
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
                       </TabsContent>
                       
                       <TabsContent value="bitbucket" className="space-y-6">

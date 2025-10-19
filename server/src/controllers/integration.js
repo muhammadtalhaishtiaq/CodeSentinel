@@ -1,6 +1,5 @@
 const SourceCredential = require('../models/SourceCredential');
 const Repository = require('../models/Repository');
-const { decrypt } = require('../utils/encryption');
 const path = require('path');
 const fs = require('fs/promises');
 const fetch = require('node-fetch');
@@ -13,34 +12,17 @@ exports.getSourceCredentials = async(req, res, next) => {
         const credentials = await SourceCredential.find({ user: req.user._id });
 
         // Return safe versions of credentials
-        const safeCredentials = credentials.map(cred => {
-            const safe = {
-                id: cred._id,
-                provider: cred.provider,
-                isDefault: cred.isDefault,
-                isActive: cred.isActive,
-                authType: cred.authType || 'manual',
-                createdAt: cred.createdAt,
-                updatedAt: cred.updatedAt
-            };
-
-            // For OAuth credentials, return provider info instead of tokens
-            if (cred.authType === 'oauth') {
-                safe.providerUsername = cred.providerUsername;
-                safe.providerEmail = cred.providerEmail;
-                safe.isConnected = true;
-            } else {
-                // For manual credentials, return the tokens (for backward compatibility)
-                if (cred.provider === 'github') {
-                    safe.githubToken = cred.githubToken;
-                } else if (cred.provider === 'bitbucket') {
-                    safe.bitbucketUsername = cred.bitbucketUsername;
-                    safe.bitbucketToken = cred.bitbucketToken;
-                }
-            }
-
-            return safe;
-        });
+        const safeCredentials = credentials.map(cred => ({
+            id: cred._id,
+            provider: cred.provider,
+            isDefault: cred.isDefault,
+            isActive: cred.isActive,
+            githubToken: cred.provider === 'github' ? cred.githubToken : undefined,
+            bitbucketUsername: cred.provider === 'bitbucket' ? cred.bitbucketUsername : undefined,
+            bitbucketToken: cred.provider === 'bitbucket' ? cred.bitbucketToken : undefined,
+            createdAt: cred.createdAt,
+            updatedAt: cred.updatedAt
+        }));
 
         res.status(200).json({
             success: true,
@@ -236,24 +218,11 @@ exports.testConnection = async(req, res, next) => {
 
             try {
                 console.log('[DEBUG] Testing GitHub token by calling GitHub API...');
-                
-                // Decrypt token if it's encrypted (OAuth tokens are encrypted)
-                let tokenToTest = githubToken;
-                if (githubToken.includes(':')) {
-                    // This looks like an encrypted token
-                    try {
-                        tokenToTest = decrypt(githubToken);
-                    } catch (err) {
-                        // If decryption fails, use as-is (might be plain token)
-                        console.log('[DEBUG] Token decryption failed, using as plain token');
-                    }
-                }
-                
                 // Test GitHub token by fetching user info
                 const response = await fetch('https://api.github.com/user', {
                     method: 'GET',
                     headers: {
-                        Authorization: `token ${tokenToTest}`,
+                        Authorization: `token ${githubToken}`,
                         Accept: 'application/vnd.github.v3+json'
                     }
                 });
@@ -457,17 +426,11 @@ exports.syncRepositories = async(req, res, next) => {
 
         if (provider === 'github') {
             try {
-                // Decrypt token if OAuth (encrypted)
-                let githubToken = credential.githubToken;
-                if (credential.authType === 'oauth') {
-                    githubToken = decrypt(githubToken);
-                }
-                
                 // Fetch GitHub repositories
                 const response = await fetch('https://api.github.com/user/repos?per_page=100', {
                     method: 'GET',
                     headers: {
-                        Authorization: `token ${githubToken}`,
+                        Authorization: `token ${credential.githubToken}`,
                         Accept: 'application/vnd.github.v3+json'
                     }
                 });
@@ -676,17 +639,11 @@ exports.fetchRepositoryCode = async(req, res, next) => {
         console.log(`[DEBUG] Creating temp directory: ${tempDir}`);
         await fs.mkdir(tempDir, { recursive: true });
 
-        // Decrypt token if OAuth (encrypted)
-        let githubToken = credential.githubToken;
-        if (credential.authType === 'oauth') {
-            githubToken = decrypt(githubToken);
-        }
-        
         // First, get the list of changed files in this branch
         console.log(`[DEBUG] Fetching branch changes from GitHub API...`);
         const compareResponse = await fetch(`https://api.github.com/repos/${repository.name}/compare/main...${branch}`, {
             headers: {
-                Authorization: `token ${githubToken}`,
+                Authorization: `token ${credential.githubToken}`,
                 Accept: 'application/vnd.github.v3+json'
             }
         });
@@ -728,7 +685,7 @@ exports.fetchRepositoryCode = async(req, res, next) => {
                 console.log(`[DEBUG] Fetching content for: ${file.filename}`);
                 const fileResponse = await fetch(`https://api.github.com/repos/${repository.name}/contents/${file.filename}?ref=${branch}`, {
                     headers: {
-                        Authorization: `token ${githubToken}`,
+                        Authorization: `token ${credential.githubToken}`,
                         Accept: 'application/vnd.github.v3.raw'
                     }
                 });

@@ -1,5 +1,3 @@
-const Project = require('../models/Project');
-
 // @desc    Get last 3 projects with issue summaries
 // @route   GET /api/projects/recent
 // @access  Private
@@ -25,7 +23,7 @@ exports.getRecentProjects = async(req, res) => {
             };
 
             // Add vulnerability counts if scan results exist
-            if (projectObj.latestScan?.result?.vulnerabilities) {
+            if (projectObj.latestScan ? .result ? .vulnerabilities) {
                 projectObj.vulnerabilityCounts = {
                     total: projectObj.latestScan.result.vulnerabilities.length,
                     critical: projectObj.latestScan.result.vulnerabilities.filter(v => v.severity === 'critical').length,
@@ -39,7 +37,7 @@ exports.getRecentProjects = async(req, res) => {
                 id: projectObj._id,
                 name: projectObj.name,
                 description: projectObj.description || '',
-                lastScanned: projectObj.latestScan?.completedAt ?
+                lastScanned: projectObj.latestScan ? .completedAt ?
                     new Date(projectObj.latestScan.completedAt).toISOString() :
                     'Never',
                 status: getProjectStatus(projectObj),
@@ -64,7 +62,7 @@ exports.getRecentProjects = async(req, res) => {
 function getProjectStatus(project) {
     if (!project.latestScan) return 'healthy';
 
-    const vulnerabilities = project.latestScan.result?.vulnerabilities || [];
+    const vulnerabilities = project.latestScan.result ? .vulnerabilities || [];
     const hasCritical = vulnerabilities.some(v => v.severity === 'critical');
     const hasHigh = vulnerabilities.some(v => v.severity === 'high');
 

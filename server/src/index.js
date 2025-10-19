@@ -6,14 +6,18 @@ const { connectDB } = require('./config/db');
 const errorHandler = require('./middleware/error');
 const config = require('./config/config');
 
-// Connect to database
-connectDB();
+// Connect to database (non-blocking - won't crash if it fails)
+connectDB().catch(err => {
+    console.error('Database connection failed:', err.message);
+    console.warn('⚠️  Server will continue without database');
+});
 
 // Route files
 const authRoutes = require('./routes/auth');
 const integrationRoutes = require('./routes/integration');
 const projectRoutes = require('./routes/project');
 const scanRoutes = require('./routes/scan');
+const oauthRoutes = require('./routes/oauth');
 
 const app = express();
 
@@ -37,6 +41,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/scans', scanRoutes);
+app.use('/api/oauth', oauthRoutes);
 
 // Serve static files in production
 if (config.env === 'production') {
@@ -54,18 +59,6 @@ app.use(errorHandler);
 
 const PORT = config.port;
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`Server running in ${config.env} mode on port ${PORT}`);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (err) => {
-    console.error(`Error: ${err.message}`);
-    server.close(() => process.exit(1));
-});
-
-// Handle uncaught exceptions
-process.on('uncaughtException', (err) => {
-    console.error(`Error: ${err.message}`);
-    server.close(() => process.exit(1));
 });

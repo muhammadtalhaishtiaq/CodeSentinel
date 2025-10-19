@@ -36,31 +36,31 @@ const Header: React.FC = () => {
         <nav className="flex items-center justify-between">
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
-            <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-8 h-8" />
-            <span className="text-xl font-bold text-indigo-600">CodeSentinel</span>
+            <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-18 h-14" />
+            {/* <span className="text-xl font-bold text-indigo-600"></span> */}
           </Link>
           
           {/* Desktop Navigation */}
           <div className="hidden lg:flex items-center space-x-8">
             <NavigationMenu>
               <NavigationMenuList>
-                {/* <NavigationMenuItem> */}
-                  {/* <NavigationMenuTrigger>Products</NavigationMenuTrigger> */}
-                  {/* <NavigationMenuContent> */}
-                    {/* <div className="grid gap-3 p-6 w-[400px]">
+                <NavigationMenuItem>
+                  <NavigationMenuTrigger>Products</NavigationMenuTrigger>
+                  <NavigationMenuContent>
+                    <div className="grid gap-3 p-6 w-[400px]">
                       <Link to="/products/code-security" className="block p-3 hover:bg-slate-50 rounded-lg">
                         <h3 className="text-sm font-semibold">Code Security</h3>
                         <p className="text-sm text-gray-500">Find and fix vulnerabilities in your code</p>
-                      </Link> */}
-                      {/* <Link to="/products/cloud-security" className="block p-3 hover:bg-slate-50 rounded-lg">
+                      </Link>
+                      <Link to="/products/cloud-security" className="block p-3 hover:bg-slate-50 rounded-lg">
                         <h3 className="text-sm font-semibold">Cloud Security</h3>
                         <p className="text-sm text-gray-500">Secure your cloud infrastructure</p>
-                      </Link> */}
-                    {/* </div> */}
-                  {/* </NavigationMenuContent> */}
-                {/* </NavigationMenuItem> */}
+                      </Link>
+                    </div>
+                  </NavigationMenuContent>
+                </NavigationMenuItem>
 
-                {/* <NavigationMenuItem>
+                <NavigationMenuItem>
                   <Link to="/platform" className="text-sm">
                     <NavigationMenuLink className="inline-flex h-10 w-max items-center justify-center rounded-md bg-background px-4 py-2 text-sm font-medium">
                       Platform
@@ -90,7 +90,7 @@ const Header: React.FC = () => {
                       Pricing
                     </NavigationMenuLink>
                   </Link>
-                </NavigationMenuItem> */}
+                </NavigationMenuItem>
               </NavigationMenuList>
             </NavigationMenu>
 

@@ -79,14 +79,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onToggle }) => {
               <span className="text-white font-bold">C</span>
             </div> */}
           {/* </div> */}
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center justify-center space-x-2">
             <Link to="/">
-              <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-8 h-8" />
+              <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-18 h-14" />
             </Link>
             {/* <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
               <span className="text-white font-bold">C</span>
             </div> */}
-              <span className="text-xl font-bold text-indigo-600">CodeSentinel</span>
+              {/* <span className="text-xl font-bold text-indigo-600">CodeSentinel</span> */}
 
           </div>
       </div>

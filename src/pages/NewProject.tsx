@@ -28,6 +28,8 @@ interface RepositoryOption {
 interface BranchOption {
   value: string;
   label: string;
+  type: 'branch' | 'pr';
+  prNumber?: number;
 }
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB in bytes
@@ -41,9 +43,9 @@ const NewProject = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<RepositoryOption | null>(null);
-  const [branches, setBranches] = useState<string[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState<BranchOption | null>(null);
-  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
+  const [refOptions, setRefOptions] = useState<BranchOption[]>([]);
+  const [selectedRef, setSelectedRef] = useState<BranchOption | null>(null);
+  const [isLoadingRefs, setIsLoadingRefs] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   
@@ -72,18 +74,19 @@ const NewProject = () => {
     fetchRepositories();
   }, []);
 
-  // Fetch branches when repository is selected
+  // Fetch branches and pull requests when repository is selected
   useEffect(() => {
-    const fetchBranches = async () => {
+    const fetchRefs = async () => {
       if (!selectedRepo?.value) {
-        setBranches([]);
-        setSelectedBranch(null);
+        setRefOptions([]);
+        setSelectedRef(null);
+        setProjectName(''); // Clear project name when repo is deselected
         return;
       }
 
-      setIsLoadingBranches(true);
-      setBranches([]);
-      setSelectedBranch(null);
+      setIsLoadingRefs(true);
+      setRefOptions([]);
+      setSelectedRef(null);
 
       try {
         const repository = repositories.find(r => r._id === selectedRepo.value);
@@ -91,47 +94,86 @@ const NewProject = () => {
           throw new Error('Repository not found');
         }
 
-        const credentialsResponse = await authenticatedRequest('/api/integrations/credentials');
-        if (!credentialsResponse?.success || !Array.isArray(credentialsResponse.data)) {
-          throw new Error('Failed to fetch credentials');
+        // Auto-fill project name from repository
+        const repoShortName = repository.name.split('/').pop() || repository.name;
+        setProjectName(repoShortName);
+
+        // Fetch branches and PRs from backend
+        const response = await authenticatedRequest(
+          `/api/repositories/${repository._id}/refs?type=all`
+        );
+
+        if (!response?.success) {
+          throw new Error('Failed to fetch branches and pull requests');
         }
 
-        const githubCred = credentialsResponse.data.find((c: any) => c.provider === 'github');
-        if (!githubCred?.githubToken) {
-          throw new Error('GitHub credentials not found');
+        const { branches, pullRequests } = response.data;
+        
+        // Build options list
+        const options: BranchOption[] = [];
+        
+        // Add branches
+        if (branches && branches.length > 0) {
+          branches.forEach((branch: any) => {
+            options.push({
+              value: branch.name,
+              label: `📁 ${branch.name}${branch.protected ? ' 🔒' : ''}`,
+              type: 'branch'
+            });
+          });
+        }
+        
+        // Add separator if both exist
+        if (branches.length > 0 && pullRequests.length > 0) {
+          options.push({
+            value: 'separator',
+            label: '──────── Pull Requests ────────',
+            type: 'branch',
+            isDisabled: true
+          } as any);
+        }
+        
+        // Add pull requests
+        if (pullRequests && pullRequests.length > 0) {
+          pullRequests.forEach((pr: any) => {
+            options.push({
+              value: pr.branch,
+              label: `🔀 PR #${pr.number}: ${pr.title}`,
+              type: 'pr',
+              prNumber: pr.number
+            });
+          });
         }
 
-        const response = await fetch(`https://api.github.com/repos/${repository.name}/branches`, {
-          headers: {
-            Authorization: `token ${githubCred.githubToken}`,
-            Accept: 'application/vnd.github.v3+json'
-          }
-        });
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch branches');
+        setRefOptions(options);
+        
+        // Auto-select main/master branch if it exists
+        const defaultBranch = branches.find((b: any) => 
+          b.name === 'main' || b.name === 'master'
+        );
+        
+        if (defaultBranch) {
+          setSelectedRef({
+            value: defaultBranch.name,
+            label: `📁 ${defaultBranch.name}`,
+            type: 'branch'
+          });
         }
 
-        const data = await response.json();
-        if (!Array.isArray(data)) {
-          throw new Error('Invalid branches data');
-        }
-
-        setBranches(data.map((branch: any) => branch.name));
       } catch (error) {
-        console.error('Error fetching branches:', error);
+        console.error('Error fetching refs:', error);
         toast({
           title: 'Error',
-          description: error instanceof Error ? error.message : 'Failed to load branches',
+          description: error instanceof Error ? error.message : 'Failed to load branches and PRs',
           variant: 'destructive'
         });
-        setBranches([]);
+        setRefOptions([]);
       } finally {
-        setIsLoadingBranches(false);
+        setIsLoadingRefs(false);
       }
     };
 
-    fetchBranches();
+    fetchRefs();
   }, [selectedRepo, repositories]);
 
   const validateFile = (file: File): boolean => {
@@ -250,10 +292,14 @@ const NewProject = () => {
   
   const handleRepoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRepo || !selectedBranch || !projectName) {
+    
+    // Project name is optional - use repo name if not provided
+    const finalProjectName = projectName.trim() || selectedRepo?.label || 'Unnamed Project';
+    
+    if (!selectedRepo || !selectedRef) {
       toast({
         variant: 'destructive',
-        description: 'Please select a repository, branch, and enter a project name'
+        description: 'Please select a repository and branch/PR'
       });
       return;
     }
@@ -270,18 +316,22 @@ const NewProject = () => {
       }
 
       console.log('[DEBUG] Creating project with:', {
-        name: projectName,
+        name: finalProjectName,
         description: description,
         repositoryId: selectedRepo.value,
-        branch: selectedBranch.value
+        branch: selectedRef.value,
+        type: selectedRef.type,
+        prNumber: selectedRef.prNumber
       });
 
       // Create project
       const response = await axios.post('/api/projects', {
-        name: projectName,
-        description: description,
+        name: finalProjectName,
+        description: description.trim() || undefined,
         repositoryId: selectedRepo.value,
-        branch: selectedBranch.value
+        branch: selectedRef.value,
+        source: selectedRef.type === 'pr' ? 'pull_request' : 'repository',
+        pullRequestNumber: selectedRef.prNumber
       }, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -298,7 +348,7 @@ const NewProject = () => {
       // Start scan
       console.log('[DEBUG] Starting scan for project:', response.data.data._id);
       const scanResponse = await axios.post(`/api/projects/${response.data.data._id}/start-scan`, {
-        branch: selectedBranch.value
+        branch: selectedRef.value
       }, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -391,31 +441,35 @@ const NewProject = () => {
                     </div>
                     
                     <div className="space-y-2">
-                      <Label htmlFor="branch">Branch</Label>
+                      <Label htmlFor="branch">Branch or Pull Request</Label>
                       <Select
                         id="branch"
-                        value={selectedBranch}
-                        onChange={(newValue) => setSelectedBranch(newValue as BranchOption)}
-                        options={branches.map(branch => ({
-                          value: branch,
-                          label: branch
-                        }))}
-                        placeholder="Select branch..."
-                        isDisabled={!selectedRepo || isLoadingBranches}
-                        isLoading={isLoadingBranches}
+                        value={selectedRef}
+                        onChange={(newValue) => setSelectedRef(newValue as BranchOption)}
+                        options={refOptions}
+                        placeholder="Select branch or PR..."
+                        isDisabled={!selectedRepo || isLoadingRefs}
+                        isLoading={isLoadingRefs}
                         className="react-select-container"
                         classNamePrefix="react-select"
                       />
+                      {selectedRef?.type === 'pr' && (
+                        <p className="text-xs text-blue-600">
+                          🔀 Scanning Pull Request #{selectedRef.prNumber}
+                        </p>
+                      )}
                     </div>
                     
                     <div className="space-y-2">
-                      <Label htmlFor="repo-project-name">Project Name</Label>
+                      <Label htmlFor="repo-project-name">
+                        Project Name 
+                        <span className="text-xs text-gray-500 ml-2">(auto-filled, optional)</span>
+                      </Label>
                       <Input 
                         id="repo-project-name"
                         value={projectName}
                         onChange={(e) => setProjectName(e.target.value)}
-                        placeholder="Enter a name for your project"
-                        required
+                        placeholder="Auto-filled from repository name"
                       />
                     </div>
 
@@ -432,9 +486,9 @@ const NewProject = () => {
                     <Button 
                       type="submit" 
                       className="w-full"
-                      disabled={!selectedRepo || !selectedBranch || !projectName.trim()}
+                      disabled={!selectedRepo || !selectedRef}
                     >
-                      Start Security Scan
+                      {selectedRef?.type === 'pr' ? 'Scan Pull Request' : 'Start Security Scan'}
                     </Button>
                   </div>
                 </form>

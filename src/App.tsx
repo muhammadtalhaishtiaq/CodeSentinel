@@ -15,7 +15,7 @@ import NewProject from "./pages/NewProject";
 import ProjectDetail from "./pages/ProjectDetail";
 import ProjectScan from "./pages/ProjectScan";
 import MyProjects from "./pages/MyProjects";
-import ApiIntegrations from "./pages/ApiIntegrations";
+import ApiIntegrations from "./pages/ApiIntegrationsNew";
 import NotFound from "./pages/NotFound";
 import Products from "./pages/Products";
 import Platform from "./pages/Platform";

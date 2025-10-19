@@ -13,7 +13,28 @@ const config = {
     port: process.env.PORT || 8080,
     mongoUri: process.env.MONGODB_URI,
     jwtSecret: process.env.JWT_SECRET,
-    jwtExpire: process.env.JWT_EXPIRE || '24h'
+    jwtExpire: process.env.JWT_EXPIRE || '24h',
+    frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
+    
+    // OAuth Configuration for all providers
+    oauth: {
+        github: {
+            clientId: process.env.GITHUB_CLIENT_ID,
+            clientSecret: process.env.GITHUB_CLIENT_SECRET,
+            callbackUrl: process.env.GITHUB_CALLBACK_URL || 'http://localhost:8080/api/oauth/github/callback'
+        },
+        bitbucket: {
+            clientId: process.env.BITBUCKET_CLIENT_ID,
+            clientSecret: process.env.BITBUCKET_CLIENT_SECRET,
+            callbackUrl: process.env.BITBUCKET_CALLBACK_URL || 'http://localhost:8080/api/oauth/bitbucket/callback'
+        },
+        azure: {
+            clientId: process.env.AZURE_CLIENT_ID,
+            clientSecret: process.env.AZURE_CLIENT_SECRET,
+            callbackUrl: process.env.AZURE_CALLBACK_URL || 'http://localhost:8080/api/oauth/azure/callback',
+            tenantId: process.env.AZURE_TENANT_ID || 'common'
+        }
+    }
 };
 
 // Validate required environment variables

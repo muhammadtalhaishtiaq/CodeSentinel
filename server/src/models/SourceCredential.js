@@ -8,7 +8,7 @@ const SourceCredentialSchema = new mongoose.Schema({
     },
     provider: {
         type: String,
-        enum: ['github', 'bitbucket'],
+        enum: ['github', 'bitbucket', 'azure'],
         required: true
     },
     isDefault: {
@@ -19,17 +19,50 @@ const SourceCredentialSchema = new mongoose.Schema({
         type: Boolean,
         default: true
     },
-    // GitHub fields
+    // OAuth fields (for GitHub, Azure, Bitbucket OAuth)
+    accessToken: {
+        type: String,
+        default: null
+    },
+    refreshToken: {
+        type: String,
+        default: null
+    },
+    expiresAt: {
+        type: Date,
+        default: null
+    },
+    providerUserId: {
+        type: String,
+        default: null
+    },
+    providerUsername: {
+        type: String,
+        default: null
+    },
+    providerEmail: {
+        type: String,
+        default: null
+    },
+    // Legacy fields (backward compatibility for manual token entry)
     githubToken: {
         type: String,
         default: null
     },
-    // Bitbucket fields
     bitbucketUsername: {
         type: String,
         default: null
     },
     bitbucketToken: {
+        type: String,
+        default: null
+    },
+    // Azure DevOps PAT fields (manual token entry)
+    azureOrganization: {
+        type: String,
+        default: null
+    },
+    azurePat: {
         type: String,
         default: null
     },

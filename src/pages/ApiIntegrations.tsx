@@ -338,7 +338,7 @@ const ApiIntegrations = () => {
                 API Integrations
               </h1>
               <p className="text-gray-600 dark:text-gray-400 text-lg">
-                Connect your code repositories securely with OAuth. No manual tokens needed.
+                Connect your code repositories securely. GitHub & Bitbucket use OAuth, Azure uses Personal Access Tokens.
               </p>
             </div>
 
@@ -346,9 +346,9 @@ const ApiIntegrations = () => {
             <div className="bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg p-4 flex items-start gap-3">
               <Shield className="w-5 h-5 text-blue-600 mt-0.5" />
               <div className="flex-1">
-                <h3 className="font-semibold text-blue-900 dark:text-blue-100">Secure OAuth Authentication</h3>
+                <h3 className="font-semibold text-blue-900 dark:text-blue-100">Secure Authentication</h3>
                 <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
-                  We use industry-standard OAuth 2.0 to connect your accounts. We never see or store your passwords.
+                  GitHub & Bitbucket use OAuth 2.0 (no passwords stored). Azure uses Personal Access Tokens that you create and control.
                 </p>
               </div>
             </div>
@@ -388,72 +388,196 @@ const ApiIntegrations = () => {
                     </CardHeader>
 
                     <CardContent className="space-y-4">
-                      {isConnected && provider.status ? (
-                        <div className="space-y-3">
-                          <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 space-y-2">
-                            <div className="flex items-center justify-between text-sm">
-                              <span className="text-gray-600 dark:text-gray-400">Username:</span>
-                              <span className="font-medium text-gray-900 dark:text-gray-100">
-                                {provider.status.username || 'N/A'}
-                              </span>
-                            </div>
-                            {provider.status.email && (
+                      {/* Azure uses manual PAT entry, others use OAuth */}
+                      {provider.id === 'azure' ? (
+                        // Azure Manual PAT Entry
+                        isConnected && provider.status ? (
+                          <div className="space-y-3">
+                            <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 space-y-2">
                               <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-600 dark:text-gray-400">Email:</span>
-                                <span className="font-medium text-gray-900 dark:text-gray-100 truncate ml-2">
-                                  {provider.status.email}
+                                <span className="text-gray-600 dark:text-gray-400">Organization:</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100">
+                                  {provider.status.username || 'N/A'}
                                 </span>
                               </div>
-                            )}
-                          </div>
+                            </div>
 
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button 
-                                variant="outline" 
-                                className="w-full border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
-                              >
-                                <X className="w-4 h-4 mr-2" />
-                                Disconnect
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Disconnect {provider.name}?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  This will remove access to your {provider.name} repositories. You can reconnect anytime.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => handleDisconnect(provider.id as any)}
-                                  className="bg-red-600 hover:bg-red-700"
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button 
+                                  variant="outline" 
+                                  className="w-full border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
                                 >
+                                  <X className="w-4 h-4 mr-2" />
                                   Disconnect
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Disconnect {provider.name}?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This will remove access to your {provider.name} repositories. You can reconnect anytime.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDisconnect(provider.id as any)}
+                                    className="bg-red-600 hover:bg-red-700"
+                                  >
+                                    Disconnect
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="azure-org" className="text-sm font-medium">
+                                Organization Name
+                              </Label>
+                              <Input
+                                id="azure-org"
+                                type="text"
+                                placeholder="myorganization"
+                                value={azureOrganization}
+                                onChange={(e) => setAzureOrganization(e.target.value)}
+                                className="w-full"
+                              />
+                              <p className="text-xs text-gray-500">
+                                From: dev.azure.com/<strong>myorganization</strong>
+                              </p>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label htmlFor="azure-pat" className="text-sm font-medium">
+                                Personal Access Token (PAT)
+                              </Label>
+                              <Input
+                                id="azure-pat"
+                                type="password"
+                                placeholder="Enter your Azure DevOps PAT"
+                                value={azurePat}
+                                onChange={(e) => setAzurePat(e.target.value)}
+                                className="w-full"
+                              />
+                              <a
+                                href="https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                              >
+                                <Key className="w-3 h-3" />
+                                How to create a PAT
+                              </a>
+                            </div>
+
+                            <div className="flex gap-2">
+                              <Button
+                                onClick={handleTestAzure}
+                                disabled={isTestingAzure || !azureOrganization || !azurePat}
+                                variant="outline"
+                                className="flex-1"
+                              >
+                                {isTestingAzure ? (
+                                  <>
+                                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                                    Testing...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Check className="w-4 h-4 mr-2" />
+                                    Test
+                                  </>
+                                )}
+                              </Button>
+                              <Button
+                                onClick={handleSaveAzure}
+                                disabled={isSavingAzure || !azureOrganization || !azurePat}
+                                className={`flex-1 bg-gradient-to-r ${provider.color} hover:opacity-90 text-white shadow-lg`}
+                              >
+                                {isSavingAzure ? (
+                                  <>
+                                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                                    Saving...
+                                  </>
+                                ) : (
+                                  'Save'
+                                )}
+                              </Button>
+                            </div>
+                          </div>
+                        )
                       ) : (
-                        <Button
-                          onClick={() => handleConnect(provider.id as any)}
-                          disabled={isConnecting}
-                          className={`w-full bg-gradient-to-r ${provider.color} hover:opacity-90 text-white shadow-lg`}
-                        >
-                          {isConnecting ? (
-                            <>
-                              <Loader className="w-4 h-4 mr-2 animate-spin" />
-                              Connecting...
-                            </>
-                          ) : (
-                            <>
-                              <ExternalLink className="w-4 h-4 mr-2" />
-                              Connect {provider.name}
-                            </>
-                          )}
-                        </Button>
+                        // GitHub & Bitbucket OAuth
+                        isConnected && provider.status ? (
+                          <div className="space-y-3">
+                            <div className="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-3 space-y-2">
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-gray-600 dark:text-gray-400">Username:</span>
+                                <span className="font-medium text-gray-900 dark:text-gray-100">
+                                  {provider.status.username || 'N/A'}
+                                </span>
+                              </div>
+                              {provider.status.email && (
+                                <div className="flex items-center justify-between text-sm">
+                                  <span className="text-gray-600 dark:text-gray-400">Email:</span>
+                                  <span className="font-medium text-gray-900 dark:text-gray-100 truncate ml-2">
+                                    {provider.status.email}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button 
+                                  variant="outline" 
+                                  className="w-full border-red-200 text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950/30"
+                                >
+                                  <X className="w-4 h-4 mr-2" />
+                                  Disconnect
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Disconnect {provider.name}?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    This will remove access to your {provider.name} repositories. You can reconnect anytime.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDisconnect(provider.id as any)}
+                                    className="bg-red-600 hover:bg-red-700"
+                                  >
+                                    Disconnect
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
+                        ) : (
+                          <Button
+                            onClick={() => handleConnect(provider.id as any)}
+                            disabled={isConnecting}
+                            className={`w-full bg-gradient-to-r ${provider.color} hover:opacity-90 text-white shadow-lg`}
+                          >
+                            {isConnecting ? (
+                              <>
+                                <Loader className="w-4 h-4 mr-2 animate-spin" />
+                                Connecting...
+                              </>
+                            ) : (
+                              <>
+                                <ExternalLink className="w-4 h-4 mr-2" />
+                                Connect {provider.name}
+                              </>
+                            )}
+                          </Button>
+                        )
                       )}
                     </CardContent>
                   </Card>

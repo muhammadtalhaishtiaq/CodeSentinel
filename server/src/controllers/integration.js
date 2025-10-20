@@ -82,6 +82,9 @@ exports.addSourceCredential = async(req, res, next) => {
     try {
         const { provider, githubToken, bitbucketUsername, bitbucketToken, azureOrganization, azurePat, isDefault } = req.body;
 
+        console.log('[DEBUG] addSourceCredential called with provider:', provider);
+        console.log('[DEBUG] Azure data:', { azureOrganization: azureOrganization ? 'present' : 'missing', azurePat: azurePat ? 'present' : 'missing' });
+
         if (!provider) {
             return res.status(400).json({
                 success: false,
@@ -183,7 +186,15 @@ exports.addSourceCredential = async(req, res, next) => {
             }
 
             credential = await SourceCredential.create(credentialData);
+            console.log('[DEBUG] ✅ New Azure credential created:', credential._id);
         }
+
+        console.log('[DEBUG] Final credential data:', {
+            id: credential._id,
+            provider: credential.provider,
+            azureOrg: credential.azureOrganization,
+            hasPat: !!credential.azurePat
+        });
 
         res.status(200).json({
             success: true,

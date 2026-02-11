@@ -16,7 +16,7 @@ import { useToast } from '@/hooks/use-toast';
 interface Repository {
   _id: string;
   name: string;
-  provider: 'github' | 'bitbucket';
+  provider: 'github' | 'bitbucket' | 'azure';
   repoId: string;
 }
 
@@ -25,9 +25,36 @@ interface RepositoryOption {
   label: string;
 }
 
-interface BranchOption {
-  value: string;
+interface PullRequest {
+  id: number;
+  title: string;
+  number: number;
+  branch: string;
+  author: string;
+  createdAt: string;
+  url: string;
+}
+
+interface PullRequestOption {
+  value: number;
   label: string;
+  branch: string;
+}
+
+interface PRFileChange {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+}
+
+interface PRFilesData {
+  files: PRFileChange[];
+  totalFiles: number;
+  totalAdditions: number;
+  totalDeletions: number;
 }
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB in bytes
@@ -41,9 +68,11 @@ const NewProject = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [selectedRepo, setSelectedRepo] = useState<RepositoryOption | null>(null);
-  const [branches, setBranches] = useState<string[]>([]);
-  const [selectedBranch, setSelectedBranch] = useState<BranchOption | null>(null);
-  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
+  const [pullRequests, setPullRequests] = useState<PullRequest[]>([]);
+  const [selectedPR, setSelectedPR] = useState<PullRequestOption | null>(null);
+  const [isLoadingPRs, setIsLoadingPRs] = useState(false);
+  const [prFilesData, setPrFilesData] = useState<PRFilesData | null>(null);
+  const [isLoadingPRFiles, setIsLoadingPRFiles] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   
@@ -72,18 +101,18 @@ const NewProject = () => {
     fetchRepositories();
   }, []);
 
-  // Fetch branches when repository is selected
+  // Fetch pull requests when repository is selected
   useEffect(() => {
-    const fetchBranches = async () => {
+    const fetchPullRequests = async () => {
       if (!selectedRepo?.value) {
-        setBranches([]);
-        setSelectedBranch(null);
+        setPullRequests([]);
+        setSelectedPR(null);
         return;
       }
 
-      setIsLoadingBranches(true);
-      setBranches([]);
-      setSelectedBranch(null);
+      setIsLoadingPRs(true);
+      setPullRequests([]);
+      setSelectedPR(null);
 
       try {
         const repository = repositories.find(r => r._id === selectedRepo.value);
@@ -91,48 +120,107 @@ const NewProject = () => {
           throw new Error('Repository not found');
         }
 
-        const credentialsResponse = await authenticatedRequest('/api/integrations/credentials');
-        if (!credentialsResponse?.success || !Array.isArray(credentialsResponse.data)) {
-          throw new Error('Failed to fetch credentials');
-        }
+        console.log('[DEBUG] Fetching PRs for repository:', repository.name);
 
-        const githubCred = credentialsResponse.data.find((c: any) => c.provider === 'github');
-        if (!githubCred?.githubToken) {
-          throw new Error('GitHub credentials not found');
-        }
-
-        const response = await fetch(`https://api.github.com/repos/${repository.name}/branches`, {
+        const response = await authenticatedRequest('/api/integrations/pull-requests', {
+          method: 'POST',
           headers: {
-            Authorization: `token ${githubCred.githubToken}`,
-            Accept: 'application/vnd.github.v3+json'
-          }
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            repositoryId: repository._id
+          })
         });
 
-        if (!response.ok) {
-          throw new Error('Failed to fetch branches');
+        if (!response?.success) {
+          throw new Error(response?.message || 'Failed to fetch pull requests');
         }
 
-        const data = await response.json();
-        if (!Array.isArray(data)) {
-          throw new Error('Invalid branches data');
+        if (!Array.isArray(response.data)) {
+          throw new Error('Invalid pull requests data');
         }
 
-        setBranches(data.map((branch: any) => branch.name));
+        console.log('[DEBUG] Fetched PRs:', response.data);
+        setPullRequests(response.data);
+
+        if (response.data.length === 0) {
+          toast({
+            title: 'No Pull Requests',
+            description: 'This repository has no open pull requests',
+          });
+        }
       } catch (error) {
-        console.error('Error fetching branches:', error);
+        console.error('Error fetching pull requests:', error);
         toast({
           title: 'Error',
-          description: error instanceof Error ? error.message : 'Failed to load branches',
+          description: error instanceof Error ? error.message : 'Failed to load pull requests',
           variant: 'destructive'
         });
-        setBranches([]);
+        setPullRequests([]);
       } finally {
-        setIsLoadingBranches(false);
+        setIsLoadingPRs(false);
       }
     };
 
-    fetchBranches();
+    fetchPullRequests();
   }, [selectedRepo, repositories]);
+
+  // Fetch PR file changes when PR is selected
+  useEffect(() => {
+    const fetchPRFiles = async () => {
+      if (!selectedPR?.value || !selectedRepo?.value) {
+        setPrFilesData(null);
+        return;
+      }
+
+      setIsLoadingPRFiles(true);
+      setPrFilesData(null);
+
+      try {
+        const repository = repositories.find(r => r._id === selectedRepo.value);
+        if (!repository) {
+          throw new Error('Repository not found');
+        }
+
+        console.log('[DEBUG] Fetching file changes for PR:', selectedPR.value);
+
+        const response = await authenticatedRequest('/api/integrations/pull-request-files', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            repositoryId: repository._id,
+            pullRequestNumber: selectedPR.value
+          })
+        });
+
+        if (!response?.success) {
+          throw new Error(response?.message || 'Failed to fetch PR file changes');
+        }
+
+        console.log('[DEBUG] Fetched PR files:', response.data);
+        setPrFilesData(response.data);
+
+        toast({
+          title: 'Files Loaded',
+          description: `Found ${response.data.totalFiles} changed files (+${response.data.totalAdditions} -${response.data.totalDeletions})`,
+        });
+      } catch (error) {
+        console.error('Error fetching PR files:', error);
+        toast({
+          title: 'Error',
+          description: error instanceof Error ? error.message : 'Failed to load PR file changes',
+          variant: 'destructive'
+        });
+        setPrFilesData(null);
+      } finally {
+        setIsLoadingPRFiles(false);
+      }
+    };
+
+    fetchPRFiles();
+  }, [selectedPR, selectedRepo, repositories]);
 
   const validateFile = (file: File): boolean => {
     setFileError(null);
@@ -250,10 +338,10 @@ const NewProject = () => {
   
   const handleRepoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedRepo || !selectedBranch || !projectName) {
+    if (!selectedRepo || !selectedPR || !projectName) {
       toast({
         variant: 'destructive',
-        description: 'Please select a repository, branch, and enter a project name'
+        description: 'Please select a repository, pull request, and enter a project name'
       });
       return;
     }
@@ -273,15 +361,19 @@ const NewProject = () => {
         name: projectName,
         description: description,
         repositoryId: selectedRepo.value,
-        branch: selectedBranch.value
+        pullRequestNumber: selectedPR.value,
+        branch: selectedPR.branch,
+        prFilesData: prFilesData
       });
 
-      // Create project
+      // Create project with PR files data
       const response = await axios.post('/api/projects', {
         name: projectName,
         description: description,
         repositoryId: selectedRepo.value,
-        branch: selectedBranch.value
+        branch: selectedPR.branch,
+        pullRequestNumber: selectedPR.value,
+        prFilesData: prFilesData // Include the file changes for AI context
       }, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -298,7 +390,8 @@ const NewProject = () => {
       // Start scan
       console.log('[DEBUG] Starting scan for project:', response.data.data._id);
       const scanResponse = await axios.post(`/api/projects/${response.data.data._id}/start-scan`, {
-        branch: selectedBranch.value
+        branch: selectedPR.branch,
+        pullRequestNumber: selectedPR.value
       }, {
         headers: {
           'Authorization': `Bearer ${token}`
@@ -369,7 +462,7 @@ const NewProject = () => {
                   <div className="text-center mb-8">
                     <h3 className="text-xl font-medium mb-2">Connect a Git Repository</h3>
                     <p className="text-slate-500 max-w-md mx-auto">
-                      Select a repository and branch to start the security scan
+                      Select a repository and pull request to start the security scan
                     </p>
                   </div>
                   
@@ -391,22 +484,74 @@ const NewProject = () => {
                     </div>
                     
                     <div className="space-y-2">
-                      <Label htmlFor="branch">Branch</Label>
+                      <Label htmlFor="pullRequest">Pull Request</Label>
                       <Select
-                        id="branch"
-                        value={selectedBranch}
-                        onChange={(newValue) => setSelectedBranch(newValue as BranchOption)}
-                        options={branches.map(branch => ({
-                          value: branch,
-                          label: branch
+                        id="pullRequest"
+                        value={selectedPR}
+                        onChange={(newValue) => setSelectedPR(newValue as PullRequestOption)}
+                        options={pullRequests.map(pr => ({
+                          value: pr.number,
+                          label: `#${pr.number} - ${pr.title}`,
+                          branch: pr.branch
                         }))}
-                        placeholder="Select branch..."
-                        isDisabled={!selectedRepo || isLoadingBranches}
-                        isLoading={isLoadingBranches}
+                        placeholder="Select pull request..."
+                        isDisabled={!selectedRepo || isLoadingPRs}
+                        isLoading={isLoadingPRs}
                         className="react-select-container"
                         classNamePrefix="react-select"
                       />
+                      {selectedPR && (
+                        <p className="text-sm text-slate-500">Branch: {selectedPR.branch}</p>
+                      )}
                     </div>
+                    
+                    {isLoadingPRFiles && (
+                      <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+                        <p className="text-sm text-blue-700">Loading file changes...</p>
+                      </div>
+                    )}
+                    
+                    {prFilesData && (
+                      <div className="p-4 bg-green-50 border border-green-200 rounded-md">
+                        <h4 className="text-sm font-semibold text-green-800 mb-2">
+                          PR Changes Ready for Scan
+                        </h4>
+                        <div className="text-sm text-green-700 space-y-1">
+                          <p><strong>{prFilesData.totalFiles}</strong> files changed</p>
+                          <p className="text-xs">
+                            <span className="text-green-600">+{prFilesData.totalAdditions} additions</span>
+                            {' / '}
+                            <span className="text-red-600">-{prFilesData.totalDeletions} deletions</span>
+                          </p>
+                          {prFilesData.files.length > 0 && (
+                            <details className="mt-2">
+                              <summary className="cursor-pointer text-xs text-green-600 hover:text-green-800">
+                                View changed files ({prFilesData.files.length})
+                              </summary>
+                              <ul className="mt-2 max-h-32 overflow-y-auto space-y-1 text-xs">
+                                {prFilesData.files.slice(0, 20).map((file, idx) => (
+                                  <li key={idx} className="flex items-center gap-2">
+                                    <span className={`inline-block px-1 rounded text-xs ${
+                                      file.status === 'added' ? 'bg-green-100 text-green-800' :
+                                      file.status === 'removed' ? 'bg-red-100 text-red-800' :
+                                      'bg-yellow-100 text-yellow-800'
+                                    }`}>
+                                      {file.status.charAt(0).toUpperCase()}
+                                    </span>
+                                    <span className="truncate">{file.filename}</span>
+                                  </li>
+                                ))}
+                                {prFilesData.files.length > 20 && (
+                                  <li className="text-slate-500 italic">
+                                    ... and {prFilesData.files.length - 20} more files
+                                  </li>
+                                )}
+                              </ul>
+                            </details>
+                          )}
+                        </div>
+                      </div>
+                    )}
                     
                     <div className="space-y-2">
                       <Label htmlFor="repo-project-name">Project Name</Label>
@@ -432,10 +577,16 @@ const NewProject = () => {
                     <Button 
                       type="submit" 
                       className="w-full"
-                      disabled={!selectedRepo || !selectedBranch || !projectName.trim()}
+                      disabled={!selectedRepo || !selectedPR || !projectName.trim() || isLoadingPRFiles || !prFilesData}
                     >
                       Start Security Scan
                     </Button>
+                    
+                    {selectedPR && !prFilesData && !isLoadingPRFiles && (
+                      <p className="text-xs text-amber-600 text-center">
+                        Waiting for PR file changes to load...
+                      </p>
+                    )}
                   </div>
                 </form>
               </Card>

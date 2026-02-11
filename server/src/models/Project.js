@@ -47,6 +47,28 @@ const ProjectSchema = new mongoose.Schema({
         ref: 'User',
         required: true
     },
+    // Pull Request related fields
+    pullRequestNumber: {
+        type: Number,
+        default: null
+    },
+    branch: {
+        type: String,
+        default: null
+    },
+    prFilesData: {
+        files: [{
+            filename: String,
+            status: String, // added, removed, modified
+            additions: Number,
+            deletions: Number,
+            changes: Number,
+            patch: String // The actual diff/changes
+        }],
+        totalFiles: Number,
+        totalAdditions: Number,
+        totalDeletions: Number
+    },
     createdAt: {
         type: Date,
         default: Date.now

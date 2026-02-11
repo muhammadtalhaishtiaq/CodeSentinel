@@ -1,36 +1,20 @@
-const Mailjet = require('node-mailjet');
+/**
+ * Email Utility - Placeholder for future email service integration
+ * Currently logs emails to console for development
+ */
 
-const mailjet = new Mailjet({
-    apiKey: process.env.MJ_APIKEY_PUBLIC,
-    apiSecret: process.env.MJ_APIKEY_PRIVATE
-});
-
-const sendEmail = async(options) => {
-    try {
-        const request = mailjet
-            .post('send', { version: 'v3.1' })
-            .request({
-                Messages: [{
-                    From: {
-                        Email: process.env.SENDER_EMAIL,
-                        Name: 'CodeSentinel'
-                    },
-                    To: [{
-                        Email: options.email,
-                        Name: options.email.split('@')[0]
-                    }],
-                    Subject: options.subject,
-                    HTMLPart: options.message
-                }]
-            });
-
-        const result = await request;
-        console.log('Email sent successfully:', result.body);
-        return result;
-    } catch (error) {
-        console.error('Error sending email:', error);
-        throw new Error('Email could not be sent');
-    }
+const sendEmail = async (options) => {
+    console.log('\n📧 ========== EMAIL (Not Sent - Development Mode) ==========');
+    console.log('To:', options.email);
+    console.log('Subject:', options.subject);
+    console.log('Message:', options.message);
+    console.log('===========================================================\n');
+    
+    // Return success for development
+    return {
+        success: true,
+        message: 'Email logged (not sent in development mode)'
+    };
 };
 
 module.exports = sendEmail;

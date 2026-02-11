@@ -5,6 +5,17 @@ const fs = require('fs/promises');
 const fetch = require('node-fetch');
 const { getAccessToken } = require('./oauth');
 
+const fetchWithTimeout = async (url, options = {}, timeoutMs = 15000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+        clearTimeout(timeoutId);
+    }
+};
+
 // @desc    Get user's source credentials
 // @route   GET /api/integrations/credentials
 // @access  Private
@@ -519,14 +530,13 @@ exports.syncRepositories = async(req, res, next) => {
 
         const accessToken = getAccessToken(credential);
 
-        if (!accessToken) {
-            return res.status(401).json({
-                success: false,
-                message: 'No valid access token found. Please reconnect your account.'
-            });
-        }
-
         if (provider === 'github') {
+            if (!accessToken) {
+                return res.status(401).json({
+                    success: false,
+                    message: 'No valid access token found. Please reconnect your account.'
+                });
+            }
             try {
                 // Fetch GitHub repositories
                 const response = await fetch('https://api.github.com/user/repos?per_page=100', {
@@ -559,52 +569,63 @@ exports.syncRepositories = async(req, res, next) => {
             }
         } else if (provider === 'azure') {
             try {
-                // Fetch Azure DevOps organizations
-                const orgsResponse = await fetch('https://app.vssps.visualstudio.com/_apis/accounts?api-version=6.0', {
+                const orgName = (credential.azureOrganization || process.env.AZURE_ORGANIZATION || process.env.AZURE_ORG || '').trim();
+                const projectName = (process.env.AZURE_PROJECT || '').trim();
+                const pat = credential.azurePat;
+
+                if (!orgName || !pat) {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'Azure organization and PAT are required to sync repositories.'
+                    });
+                }
+
+                const authHeader = 'Basic ' + Buffer.from(`:${pat}`).toString('base64');
+                const projectsResponse = await fetchWithTimeout(`https://dev.azure.com/${orgName}/_apis/projects?api-version=7.0`, {
                     headers: {
-                        Authorization: `Bearer ${accessToken}`
+                        Authorization: authHeader,
+                        Accept: 'application/json'
                     }
                 });
 
-                if (!orgsResponse.ok) {
-                    throw new Error('Failed to fetch Azure DevOps organizations');
+                if (!projectsResponse.ok) {
+                    const errorData = await projectsResponse.json();
+                    throw new Error(errorData.message || 'Failed to fetch Azure DevOps projects');
                 }
 
-                const orgs = await orgsResponse.json();
+                const projectsData = await projectsResponse.json();
+                const projects = projectsData.value || [];
+                const filteredProjects = projectName
+                    ? projects.filter((project) => project.name && project.name.toLowerCase() === projectName.toLowerCase())
+                    : projects;
 
-                // Fetch projects for each organization
-                for (const org of orgs.value) {
-                    const projectsResponse = await fetch(`https://dev.azure.com/${org.accountName}/_apis/projects?api-version=6.0`, {
-                        headers: {
-                            Authorization: `Bearer ${accessToken}`
-                        }
+                if (projectName && filteredProjects.length === 0) {
+                    return res.status(404).json({
+                        success: false,
+                        message: `Azure project not found: ${projectName}`
                     });
+                }
 
-                    if (projectsResponse.ok) {
-                        const projectsData = await projectsResponse.json();
-                        
-                        // Fetch repos for each project
-                        for (const project of projectsData.value) {
-                            const reposResponse = await fetch(
-                                `https://dev.azure.com/${org.accountName}/${project.id}/_apis/git/repositories?api-version=6.0`,
-                                {
-                                    headers: {
-                                        Authorization: `Bearer ${accessToken}`
-                                    }
-                                }
-                            );
-
-                            if (reposResponse.ok) {
-                                const reposData = await reposResponse.json();
-                                reposData.value.forEach(repo => {
-                                    repositories.push({
-                                        name: `${org.accountName}/${project.name}/${repo.name}`,
-                                        repoId: repo.id,
-                                        provider: 'azure'
-                                    });
-                                });
+                for (const project of filteredProjects) {
+                    const reposResponse = await fetchWithTimeout(
+                        `https://dev.azure.com/${orgName}/${project.id}/_apis/git/repositories?api-version=7.0`,
+                        {
+                            headers: {
+                                Authorization: authHeader,
+                                Accept: 'application/json'
                             }
                         }
+                    );
+
+                    if (reposResponse.ok) {
+                        const reposData = await reposResponse.json();
+                        reposData.value.forEach(repo => {
+                            repositories.push({
+                                name: `${orgName}/${project.name}/${repo.name}`,
+                                repoId: repo.id,
+                                provider: 'azure'
+                            });
+                        });
                     }
                 }
             } catch (error) {
@@ -889,6 +910,347 @@ exports.fetchRepositoryCode = async(req, res, next) => {
         res.status(500).json({
             success: false,
             message: error.message || 'Failed to fetch repository code'
+        });
+    }
+};
+
+// @desc    Get pull requests for a repository
+// @route   POST /api/integrations/pull-requests
+// @access  Private
+exports.getPullRequests = async(req, res, next) => {
+    try {
+        const { repositoryId } = req.body;
+
+        if (!repositoryId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Repository ID is required'
+            });
+        }
+
+        // Get the repository details
+        const repository = await Repository.findOne({
+            _id: repositoryId,
+            user: req.user._id
+        });
+
+        if (!repository) {
+            return res.status(404).json({
+                success: false,
+                message: 'Repository not found'
+            });
+        }
+
+        // Get credentials for the provider
+        const credential = await SourceCredential.findOne({
+            user: req.user._id,
+            provider: repository.provider,
+            isActive: true
+        });
+
+        if (!credential) {
+            return res.status(404).json({
+                success: false,
+                message: `No ${repository.provider} credentials found`
+            });
+        }
+
+        let pullRequests = [];
+
+        // Fetch PRs based on provider
+        if (repository.provider === 'github') {
+            // GitHub API
+            const response = await fetchWithTimeout(
+                `https://api.github.com/repos/${repository.name}/pulls?state=open`,
+                {
+                    headers: {
+                        'Authorization': `token ${credential.githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`GitHub API error: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            pullRequests = data.map(pr => ({
+                id: pr.number,
+                title: pr.title,
+                number: pr.number,
+                branch: pr.head.ref,
+                author: pr.user.login,
+                createdAt: pr.created_at,
+                url: pr.html_url
+            }));
+
+        } else if (repository.provider === 'bitbucket') {
+            // Bitbucket API
+            const response = await fetchWithTimeout(
+                `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests?state=OPEN`,
+                {
+                    headers: {
+                        'Authorization': `Basic ${Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64')}`,
+                        'Accept': 'application/json'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`Bitbucket API error: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            pullRequests = (data.values || []).map(pr => ({
+                id: pr.id,
+                title: pr.title,
+                number: pr.id,
+                branch: pr.source.branch.name,
+                author: pr.author.display_name,
+                createdAt: pr.created_on,
+                url: pr.links.html.href
+            }));
+
+        } else if (repository.provider === 'azure') {
+            // Azure DevOps API
+            const [org, project, repo] = repository.name.split('/');
+            const azureOrg = credential.azureOrganization || org;
+            
+            const response = await fetchWithTimeout(
+                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullrequests?api-version=7.0&searchCriteria.status=active`,
+                {
+                    headers: {
+                        'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
+                        'Accept': 'application/json'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`Azure DevOps API error: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            pullRequests = (data.value || []).map(pr => ({
+                id: pr.pullRequestId,
+                title: pr.title,
+                number: pr.pullRequestId,
+                branch: pr.sourceRefName.replace('refs/heads/', ''),
+                author: pr.createdBy.displayName,
+                createdAt: pr.creationDate,
+                url: `https://dev.azure.com/${azureOrg}/${project}/_git/${repo}/pullrequest/${pr.pullRequestId}`
+            }));
+        }
+
+        res.status(200).json({
+            success: true,
+            data: pullRequests
+        });
+
+    } catch (error) {
+        console.error('[DEBUG] Error fetching pull requests:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to fetch pull requests'
+        });
+    }
+};
+
+// @desc    Get file changes/diffs for a pull request
+// @route   POST /api/integrations/pull-request-files
+// @access  Private
+exports.getPullRequestFiles = async(req, res, next) => {
+    try {
+        const { repositoryId, pullRequestNumber } = req.body;
+
+        if (!repositoryId || !pullRequestNumber) {
+            return res.status(400).json({
+                success: false,
+                message: 'Repository ID and Pull Request number are required'
+            });
+        }
+
+        // Get the repository details
+        const repository = await Repository.findOne({
+            _id: repositoryId,
+            user: req.user._id
+        });
+
+        if (!repository) {
+            return res.status(404).json({
+                success: false,
+                message: 'Repository not found'
+            });
+        }
+
+        // Get credentials for the provider
+        const credential = await SourceCredential.findOne({
+            user: req.user._id,
+            provider: repository.provider,
+            isActive: true
+        });
+
+        if (!credential) {
+            return res.status(404).json({
+                success: false,
+                message: `No ${repository.provider} credentials found`
+            });
+        }
+
+        let files = [];
+
+        // Fetch PR file changes based on provider
+        if (repository.provider === 'github') {
+            // GitHub API - Get PR files
+            const response = await fetchWithTimeout(
+                `https://api.github.com/repos/${repository.name}/pulls/${pullRequestNumber}/files`,
+                {
+                    headers: {
+                        'Authorization': `token ${credential.githubToken}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`GitHub API error: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            files = data.map(file => ({
+                filename: file.filename,
+                status: file.status, // added, removed, modified, renamed
+                additions: file.additions,
+                deletions: file.deletions,
+                changes: file.changes,
+                patch: file.patch, // The actual diff
+                previousFilename: file.previous_filename,
+                blobUrl: file.blob_url,
+                rawUrl: file.raw_url
+            }));
+
+        } else if (repository.provider === 'bitbucket') {
+            // Bitbucket API - Get PR diff
+            const response = await fetchWithTimeout(
+                `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests/${pullRequestNumber}/diffstat`,
+                {
+                    headers: {
+                        'Authorization': `Basic ${Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64')}`,
+                        'Accept': 'application/json'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                throw new Error(`Bitbucket API error: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            
+            // Fetch the actual diff for each file
+            const diffResponse = await fetchWithTimeout(
+                `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests/${pullRequestNumber}/diff`,
+                {
+                    headers: {
+                        'Authorization': `Basic ${Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64')}`,
+                        'Accept': 'text/plain'
+                    }
+                }
+            );
+
+            const diffText = await diffResponse.text();
+
+            files = (data.values || []).map(file => ({
+                filename: file.new?.path || file.old?.path || 'unknown',
+                status: file.status, // added, removed, modified
+                additions: file.lines_added || 0,
+                deletions: file.lines_removed || 0,
+                changes: (file.lines_added || 0) + (file.lines_removed || 0),
+                patch: diffText, // Full diff text
+                previousFilename: file.old?.path,
+                type: file.type
+            }));
+
+        } else if (repository.provider === 'azure') {
+            // Azure DevOps API
+            const [org, project, repo] = repository.name.split('/');
+            const azureOrg = credential.azureOrganization || org;
+            
+            // Get PR commits to find changes
+            const commitsResponse = await fetchWithTimeout(
+                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullRequests/${pullRequestNumber}/commits?api-version=7.0`,
+                {
+                    headers: {
+                        'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
+                        'Accept': 'application/json'
+                    }
+                }
+            );
+
+            if (!commitsResponse.ok) {
+                throw new Error(`Azure DevOps API error: ${commitsResponse.statusText}`);
+            }
+
+            const commitsData = await commitsResponse.json();
+            
+            if (commitsData.value && commitsData.value.length > 0) {
+                // Get the last commit to find changed files
+                const lastCommit = commitsData.value[commitsData.value.length - 1];
+                
+                // Get changes for this commit
+                const changesResponse = await fetchWithTimeout(
+                    `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/commits/${lastCommit.commitId}/changes?api-version=7.0`,
+                    {
+                        headers: {
+                            'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
+                            'Accept': 'application/json'
+                        }
+                    }
+                );
+
+                if (changesResponse.ok) {
+                    const changesData = await changesResponse.json();
+                    
+                    // Filter out folders, only keep files (gitObjectType === 'blob')
+                    files = (changesData.changes || [])
+                        .filter(change => {
+                            // Only include actual files (blobs), not folders (trees)
+                            return change.item && 
+                                   change.item.gitObjectType === 'blob' && 
+                                   change.item.path && 
+                                   !change.item.isFolder;
+                        })
+                        .map(change => ({
+                            filename: change.item.path,
+                            status: change.changeType?.toLowerCase() || 'modified', // edit, add, delete
+                            additions: 0, // Azure doesn't provide this in the same way
+                            deletions: 0,
+                            changes: 0,
+                            objectId: change.item.objectId,
+                            url: change.item.url
+                        }));
+                }
+            }
+        }
+
+        console.log(`[DEBUG] Found ${files.length} changed files in PR #${pullRequestNumber}`);
+
+        res.status(200).json({
+            success: true,
+            data: {
+                files,
+                totalFiles: files.length,
+                totalAdditions: files.reduce((sum, f) => sum + (f.additions || 0), 0),
+                totalDeletions: files.reduce((sum, f) => sum + (f.deletions || 0), 0)
+            }
+        });
+
+    } catch (error) {
+        console.error('[DEBUG] Error fetching PR files:', error);
+        res.status(500).json({
+            success: false,
+            message: error.message || 'Failed to fetch pull request files'
         });
     }
 };

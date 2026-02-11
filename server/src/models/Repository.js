@@ -17,7 +17,7 @@ const RepositorySchema = new mongoose.Schema({
     },
     provider: {
         type: String,
-        enum: ['github', 'bitbucket'],
+        enum: ['github', 'bitbucket', 'azure'],
         required: true
     },
     repoId: {

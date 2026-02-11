@@ -106,8 +106,8 @@ exports.getProject = async(req, res, next) => {
 // @access  Private
 exports.createProject = async(req, res) => {
     try {
-        const { name, repositoryId, branch } = req.body;
-        console.log('[DEBUG] Creating project with:', { name, repositoryId, branch });
+        const { name, description, repositoryId, branch, pullRequestNumber, prFilesData } = req.body;
+        console.log('[DEBUG] Creating project with:', { name, repositoryId, branch, pullRequestNumber, prFilesData: prFilesData ? 'present' : 'not present' });
 
         if (!name || !repositoryId || !branch) {
             return res.status(400).json({
@@ -125,16 +125,19 @@ exports.createProject = async(req, res) => {
             });
         }
 
-        // Create the project
+        // Create the project with PR data
         const project = new Project({
             name,
+            description,
             repository: repository._id,
             branch,
+            pullRequestNumber,
+            prFilesData,
             user: req.user._id
         });
 
         await project.save();
-        console.log('[DEBUG] Project created:', project);
+        console.log('[DEBUG] Project created:', project._id);
 
         // Populate repository details
         await project.populate('repository');

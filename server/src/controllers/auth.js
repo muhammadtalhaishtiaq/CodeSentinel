@@ -139,6 +139,7 @@ exports.forgotPassword = async(req, res, next) => {
         // Create reset URL
         const resetUrl = `${process.env.BASE_URL}/reset-password/${resetToken}`;
         console.log('Reset URL:', resetUrl);
+        
         // Create message
         const message = `
                 <h1>Password Reset</h1>
@@ -147,29 +148,29 @@ exports.forgotPassword = async(req, res, next) => {
                 <a href="${resetUrl}" target="_blank">Reset Password</a>
                 <p>If you didn't request this, please ignore this email.</p>
                 `;
-        console.log('Message:', message);
-        // try {
-        await sendEmail({
-            email: user.email,
-            subject: 'Password reset token',
-            message
-        });
 
-        res.status(200).json({
-            success: true,
-            message: 'Email sent'
-        });
-        // } catch (err) {
-        //     // Clear reset token fields if email fails
-        //     user.resetPasswordToken = undefined;
-        //     user.resetPasswordExpire = undefined;
-        //     await user.save({ validateBeforeSave: false });
+        try {
+            await sendEmail({
+                email: user.email,
+                subject: 'Password reset token',
+                message
+            });
 
-        //     return res.status(500).json({
-        //         success: false,
-        //         message: 'Email could not be sent'
-        //     });
-        // }
+            res.status(200).json({
+                success: true,
+                message: 'Password reset link generated (check console in development mode)'
+            });
+        } catch (err) {
+            // Clear reset token fields if email fails
+            user.resetPasswordToken = undefined;
+            user.resetPasswordExpire = undefined;
+            await user.save({ validateBeforeSave: false });
+
+            return res.status(500).json({
+                success: false,
+                message: 'Email could not be sent'
+            });
+        }
     } catch (error) {
         next(error);
     }

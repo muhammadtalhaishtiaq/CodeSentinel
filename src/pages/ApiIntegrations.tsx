@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
-import { Github, Check, X, Loader, ExternalLink, Shield, AlertCircle, Cloud, Key } from 'lucide-react';
+import { Github, Check, X, Loader, ExternalLink, Shield, AlertCircle, Cloud, Key, RefreshCw } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
 import { useToast } from '@/components/ui/use-toast';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -43,6 +43,7 @@ const ApiIntegrations = () => {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [syncingProvider, setSyncingProvider] = useState<string | null>(null);
   
   // Azure manual PAT state
   const [azureOrganization, setAzureOrganization] = useState('');
@@ -275,6 +276,33 @@ const ApiIntegrations = () => {
     }
   };
 
+  const handleSyncRepositories = async (provider: 'azure') => {
+    setSyncingProvider(provider);
+    try {
+      const response = await authenticatedRequest('/api/integrations/sync-repositories', {
+        method: 'POST',
+        body: JSON.stringify({ provider })
+      });
+
+      if (response.success) {
+        toast({
+          title: 'Sync Successful!',
+          description: response.message || `Repositories synced from ${provider}`,
+        });
+      } else {
+        throw new Error(response.message || 'Sync failed');
+      }
+    } catch (error: any) {
+      toast({
+        title: 'Sync Failed',
+        description: error.message || 'Failed to sync repositories',
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncingProvider(null);
+    }
+  };
+
   const providers = [
     {
       id: 'github',
@@ -294,19 +322,19 @@ const ApiIntegrations = () => {
       accentColor: 'border-blue-500',
       status: oauthStatus.azure
     },
-    {
-      id: 'bitbucket',
-      name: 'Bitbucket',
-      description: 'Connect Bitbucket to analyze your team repositories',
-      icon: () => (
-        <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
-          <path d="M.778 1.213a.768.768 0 00-.768.892l3.263 19.81c.084.5.515.868 1.022.873H19.95a.772.772 0 00.77-.646l3.27-20.03a.768.768 0 00-.768-.891zM14.52 15.528H9.522L8.17 8.464h7.561z"/>
-        </svg>
-      ),
-      color: 'from-blue-700 to-blue-900',
-      accentColor: 'border-blue-600',
-      status: oauthStatus.bitbucket
-    }
+    // {
+    //   id: 'bitbucket',
+    //   name: 'Bitbucket',
+    //   description: 'Connect Bitbucket to analyze your team repositories',
+    //   icon: () => (
+    //     <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
+    //       <path d="M.778 1.213a.768.768 0 00-.768.892l3.263 19.81c.084.5.515.868 1.022.873H19.95a.772.772 0 00.77-.646l3.27-20.03a.768.768 0 00-.768-.891zM14.52 15.528H9.522L8.17 8.464h7.561z"/>
+    //     </svg>
+    //   ),
+    //   color: 'from-blue-700 to-blue-900',
+    //   accentColor: 'border-blue-600',
+    //   status: oauthStatus.bitbucket
+    // }
   ];
 
   if (isLoading) {
@@ -401,6 +429,24 @@ const ApiIntegrations = () => {
                                 </span>
                               </div>
                             </div>
+
+                            <Button
+                              onClick={() => handleSyncRepositories('azure')}
+                              disabled={syncingProvider === 'azure'}
+                              className={`w-full bg-gradient-to-r ${provider.color} hover:opacity-90 text-white`}
+                            >
+                              {syncingProvider === 'azure' ? (
+                                <>
+                                  <Loader className="w-4 h-4 mr-2 animate-spin" />
+                                  Syncing...
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw className="w-4 h-4 mr-2" />
+                                  Sync Repositories
+                                </>
+                              )}
+                            </Button>
 
                             <AlertDialog>
                               <AlertDialogTrigger asChild>

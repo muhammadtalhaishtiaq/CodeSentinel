@@ -8,7 +8,9 @@ const {
     getRepositories,
     toggleRepository,
     deleteRepository,
-    syncRepositories
+    syncRepositories,
+    getPullRequests,
+    getPullRequestFiles
 } = require('../controllers/integration');
 const { protect } = require('../middleware/auth');
 
@@ -43,5 +45,11 @@ router.route('/repositories/:id')
 
 // Sync repositories route
 router.post('/sync-repositories', syncRepositories);
+
+// Get pull requests route
+router.post('/pull-requests', getPullRequests);
+
+// Get pull request files route
+router.post('/pull-request-files', getPullRequestFiles);
 
 module.exports = router;

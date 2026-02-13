@@ -76,6 +76,9 @@ const NewProject = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   
+  // Filter to only enabled repositories
+  const enabledRepositories = repositories.filter(repo => repo.isEnabled === true);
+  
   // Fetch repositories on component mount
   useEffect(() => {
     const fetchRepositories = async () => {
@@ -447,12 +450,12 @@ const NewProject = () => {
             <h1 className="text-3xl font-bold mb-8">New Security Scan</h1>
             
             <Tabs defaultValue="repository">
-              <TabsList className="grid w-full grid-cols-2 mb-8">
+              {/* <TabsList className="grid w-full grid-cols-2 mb-8">
                 <TabsTrigger value="repository" className="text-lg py-3">
                   <Github className="mr-2 h-5 w-5" />
                   Connect Repository
                 </TabsTrigger>
-              </TabsList>
+              </TabsList> */}
               
               <Card className="p-10">
                 <form onSubmit={(e) => {
@@ -467,21 +470,40 @@ const NewProject = () => {
                   </div>
                   
                   <div className="space-y-6 max-w-md mx-auto">
-                    <div className="space-y-2">
-                      <Label htmlFor="repository">Select Repository</Label>
-                      <Select
-                        id="repository"
-                        value={selectedRepo}
-                        onChange={(newValue) => setSelectedRepo(newValue as RepositoryOption)}
-                        options={repositories.map(repo => ({
-                          value: repo._id,
-                          label: repo.name
-                        }))}
-                        placeholder="Select repository..."
-                        className="react-select-container"
-                        classNamePrefix="react-select"
-                      />
-                    </div>
+                    {enabledRepositories.length === 0 ? (
+                      <div className="p-6 bg-yellow-50 border-2 border-yellow-200 rounded-lg text-center">
+                        <p className="text-yellow-800 font-medium mb-2">No Repositories Available</p>
+                        <p className="text-sm text-yellow-700 mb-4">
+                          Please go to the Integrations page to enable repositories for projects.
+                        </p>
+                        <Button
+                          onClick={() => navigate('/api-integrations')}
+                          variant="outline"
+                          className="border-yellow-600 text-yellow-700 hover:bg-yellow-100"
+                        >
+                          Go to Integrations
+                        </Button>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="space-y-2">
+                          <Label htmlFor="repository">Select Repository</Label>
+                          <Select
+                            id="repository"
+                            value={selectedRepo}
+                            onChange={(newValue) => setSelectedRepo(newValue as RepositoryOption)}
+                            options={enabledRepositories.map(repo => ({
+                              value: repo._id,
+                              label: `[${repo.provider.toUpperCase()}] ${repo.name}`
+                            }))}
+                            placeholder="Select repository..."
+                            className="react-select-container"
+                            classNamePrefix="react-select"
+                          />
+                          <p className="text-xs text-slate-500">
+                            Showing {enabledRepositories.length} enabled repositories
+                          </p>
+                        </div>
                     
                     <div className="space-y-2">
                       <Label htmlFor="pullRequest">Pull Request</Label>
@@ -581,8 +603,10 @@ const NewProject = () => {
                     >
                       Start Security Scan
                     </Button>
+                      </>
+                    )}
                     
-                    {selectedPR && !prFilesData && !isLoadingPRFiles && (
+                    {selectedPR && !prFilesData && !isLoadingPRFiles && enabledRepositories.length > 0 && (
                       <p className="text-xs text-amber-600 text-center">
                         Waiting for PR file changes to load...
                       </p>

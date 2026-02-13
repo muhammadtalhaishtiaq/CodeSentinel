@@ -2,8 +2,22 @@ const SourceCredential = require('../models/SourceCredential');
 const Repository = require('../models/Repository');
 const path = require('path');
 const fs = require('fs/promises');
-const fetch = require('node-fetch');
 const { getAccessToken } = require('./oauth');
+
+/**
+ * Sanitize a credential object to strip sensitive tokens before returning in API responses.
+ * Only returns safe, non-secret fields.
+ */
+const sanitizeCredential = (cred) => ({
+    _id: cred._id,
+    provider: cred.provider,
+    isDefault: cred.isDefault,
+    isActive: cred.isActive,
+    providerUsername: cred.providerUsername,
+    providerEmail: cred.providerEmail,
+    createdAt: cred.createdAt,
+    updatedAt: cred.updatedAt
+});
 
 const fetchWithTimeout = async (url, options = {}, timeoutMs = 15000) => {
     const controller = new AbortController();
@@ -23,18 +37,8 @@ exports.getSourceCredentials = async(req, res, next) => {
     try {
         const credentials = await SourceCredential.find({ user: req.user._id });
 
-        // Return safe versions of credentials
-        const safeCredentials = credentials.map(cred => ({
-            id: cred._id,
-            provider: cred.provider,
-            isDefault: cred.isDefault,
-            isActive: cred.isActive,
-            githubToken: cred.provider === 'github' ? cred.githubToken : undefined,
-            bitbucketUsername: cred.provider === 'bitbucket' ? cred.bitbucketUsername : undefined,
-            bitbucketToken: cred.provider === 'bitbucket' ? cred.bitbucketToken : undefined,
-            createdAt: cred.createdAt,
-            updatedAt: cred.updatedAt
-        }));
+        // Return safe versions of credentials (no tokens/secrets)
+        const safeCredentials = credentials.map(sanitizeCredential);
 
         res.status(200).json({
             success: true,
@@ -63,22 +67,10 @@ exports.getSourceCredentialById = async(req, res, next) => {
             });
         }
 
-        // Return credential with sensitive data
-        const safeCredential = {
-            id: credential._id,
-            provider: credential.provider,
-            isDefault: credential.isDefault,
-            isActive: credential.isActive,
-            githubToken: credential.provider === 'github' ? credential.githubToken : undefined,
-            bitbucketUsername: credential.provider === 'bitbucket' ? credential.bitbucketUsername : undefined,
-            bitbucketToken: credential.provider === 'bitbucket' ? credential.bitbucketToken : undefined,
-            createdAt: credential.createdAt,
-            updatedAt: credential.updatedAt
-        };
-
+        // Return credential without sensitive tokens
         res.status(200).json({
             success: true,
-            data: safeCredential
+            data: sanitizeCredential(credential)
         });
     } catch (error) {
         console.error('Error fetching credential by ID:', error);
@@ -94,7 +86,6 @@ exports.addSourceCredential = async(req, res, next) => {
         const { provider, githubToken, bitbucketUsername, bitbucketToken, azureOrganization, azurePat, isDefault } = req.body;
 
         console.log('[DEBUG] addSourceCredential called with provider:', provider);
-        console.log('[DEBUG] Azure data:', { azureOrganization: azureOrganization ? 'present' : 'missing', azurePat: azurePat ? 'present' : 'missing' });
 
         if (!provider) {
             return res.status(400).json({
@@ -200,28 +191,9 @@ exports.addSourceCredential = async(req, res, next) => {
             console.log('[DEBUG] ✅ New Azure credential created:', credential._id);
         }
 
-        console.log('[DEBUG] Final credential data:', {
-            id: credential._id,
-            provider: credential.provider,
-            azureOrg: credential.azureOrganization,
-            hasPat: !!credential.azurePat
-        });
-
         res.status(200).json({
             success: true,
-            data: {
-                id: credential._id,
-                provider: credential.provider,
-                isDefault: credential.isDefault,
-                isActive: credential.isActive,
-                githubToken: credential.provider === 'github' ? credential.githubToken : undefined,
-                bitbucketUsername: credential.provider === 'bitbucket' ? credential.bitbucketUsername : undefined,
-                bitbucketToken: credential.provider === 'bitbucket' ? credential.bitbucketToken : undefined,
-                azureOrganization: credential.provider === 'azure' ? credential.azureOrganization : undefined,
-                azurePat: credential.provider === 'azure' ? credential.azurePat : undefined,
-                createdAt: credential.createdAt,
-                updatedAt: credential.updatedAt
-            },
+            data: sanitizeCredential(credential),
             message: isDefaultUpdate ?
                 `${provider.charAt(0).toUpperCase() + provider.slice(1)} set as default provider` :
                 (existingCredential ? 'Credentials updated successfully' : 'Credentials added successfully')
@@ -239,14 +211,6 @@ exports.testConnection = async(req, res, next) => {
     try {
         const { provider, githubToken, bitbucketUsername, bitbucketToken, azureOrganization, azurePat } = req.body;
         console.log(`[DEBUG] Validating integration for provider: ${provider}`);
-        console.log(`[DEBUG] Request body:`, JSON.stringify({
-            provider,
-            githubToken: githubToken ? '***token-redacted***' : undefined,
-            bitbucketUsername,
-            bitbucketToken: bitbucketToken ? '***token-redacted***' : undefined,
-            azureOrganization,
-            azurePat: azurePat ? '***token-redacted***' : undefined
-        }));
 
         if (!provider) {
             console.log('[DEBUG] Error: Provider type is missing');
@@ -280,11 +244,10 @@ exports.testConnection = async(req, res, next) => {
                 });
 
                 console.log(`[DEBUG] GitHub API response status: ${response.status}`);
-                const responseText = await response.text();
-                console.log(`[DEBUG] GitHub API response body: ${responseText}`);
 
                 let responseData;
                 try {
+                    const responseText = await response.text();
                     responseData = JSON.parse(responseText);
                 } catch (e) {
                     console.log('[DEBUG] Failed to parse GitHub response as JSON');
@@ -323,11 +286,10 @@ exports.testConnection = async(req, res, next) => {
                 });
 
                 console.log(`[DEBUG] Bitbucket API response status: ${response.status}`);
-                const responseText = await response.text();
-                console.log(`[DEBUG] Bitbucket API response body: ${responseText}`);
 
                 let responseData;
                 try {
+                    const responseText = await response.text();
                     responseData = JSON.parse(responseText);
                 } catch (e) {
                     console.log('[DEBUG] Failed to parse Bitbucket response as JSON');
@@ -374,11 +336,10 @@ exports.testConnection = async(req, res, next) => {
                 });
 
                 console.log(`[DEBUG] Azure API response status: ${response.status}`);
-                const responseText = await response.text();
-                console.log(`[DEBUG] Azure API response body: ${responseText}`);
 
                 let responseData;
                 try {
+                    const responseText = await response.text();
                     responseData = JSON.parse(responseText);
                 } catch (e) {
                     console.log('[DEBUG] Failed to parse Azure response as JSON');
@@ -636,9 +597,20 @@ exports.syncRepositories = async(req, res, next) => {
             }
         } else if (provider === 'bitbucket') {
             try {
-                // Fetch Bitbucket repositories
-                const authHeader = 'Basic ' + Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64');
-                const response = await fetch('https://api.bitbucket.org/2.0/repositories', {
+                // Fetch Bitbucket repositories — support both OAuth and Basic auth
+                let authHeader;
+                if (credential.accessToken) {
+                    authHeader = `Bearer ${credential.accessToken}`;
+                } else if (credential.bitbucketUsername && credential.bitbucketToken) {
+                    authHeader = 'Basic ' + Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64');
+                } else {
+                    return res.status(401).json({
+                        success: false,
+                        message: 'No valid Bitbucket credentials found. Please reconnect your account.'
+                    });
+                }
+
+                const response = await fetch('https://api.bitbucket.org/2.0/repositories?role=member', {
                     method: 'GET',
                     headers: {
                         Authorization: authHeader
@@ -669,43 +641,56 @@ exports.syncRepositories = async(req, res, next) => {
 
         // Save repositories to database
         const savedRepos = [];
+        const errors = [];
 
         for (const repo of repositories) {
             try {
-                // Check if repository already exists
-                let existingRepo = await Repository.findOne({
-                    user: req.user._id,
-                    provider: repo.provider,
-                    repoId: repo.repoId
-                });
-
-                if (existingRepo) {
-                    // Update existing repository
-                    existingRepo.name = repo.name;
-                    existingRepo.updatedAt = Date.now();
-                    await existingRepo.save();
-                    savedRepos.push(existingRepo);
-                } else {
-                    // Create new repository
-                    const newRepo = await Repository.create({
+                // Use findOneAndUpdate with upsert to handle duplicates atomically
+                const savedRepo = await Repository.findOneAndUpdate(
+                    {
                         user: req.user._id,
-                        sourceCredential: credential._id,
-                        name: repo.name,
                         provider: repo.provider,
                         repoId: repo.repoId
-                    });
-                    savedRepos.push(newRepo);
-                }
+                    },
+                    {
+                        $set: {
+                            name: repo.name,
+                            sourceCredential: credential._id,
+                            updatedAt: Date.now()
+                        },
+                        $setOnInsert: {
+                            user: req.user._id,
+                            provider: repo.provider,
+                            repoId: repo.repoId,
+                            isEnabled: false, // New repos default to unselected
+                            connectedAt: Date.now()
+                        }
+                    },
+                    {
+                        upsert: true,
+                        new: true,
+                        runValidators: true
+                    }
+                );
+                savedRepos.push(savedRepo);
             } catch (error) {
                 console.error(`Error saving repository ${repo.name}:`, error);
+                errors.push({ repo: repo.name, error: error.message });
             }
         }
 
-        res.status(200).json({
+        const response = {
             success: true,
             data: savedRepos,
             message: `${savedRepos.length} repositories synced successfully`
-        });
+        };
+
+        if (errors.length > 0) {
+            response.warnings = errors;
+            response.message += ` (${errors.length} errors occurred)`;
+        }
+
+        res.status(200).json(response);
     } catch (error) {
         next(error);
     }
@@ -725,10 +710,10 @@ exports.updateDefaultProvider = async(req, res, next) => {
             });
         }
 
-        if (provider !== 'github' && provider !== 'bitbucket') {
+        if (!['github', 'bitbucket', 'azure'].includes(provider)) {
             return res.status(400).json({
                 success: false,
-                message: 'Invalid provider. Must be "github" or "bitbucket"'
+                message: 'Invalid provider. Must be "github", "bitbucket", or "azure"'
             });
         }
 
@@ -1018,7 +1003,8 @@ exports.getPullRequests = async(req, res, next) => {
             const azureOrg = credential.azureOrganization || org;
             
             const response = await fetchWithTimeout(
-                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullrequests?api-version=7.0&searchCriteria.status=active`,
+                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullrequests?api-version=7.0`,
+                // &searchCriteria.status=active
                 {
                     headers: {
                         'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
@@ -1033,9 +1019,9 @@ exports.getPullRequests = async(req, res, next) => {
 
             const data = await response.json();
             pullRequests = (data.value || []).map(pr => ({
-                id: pr.pullRequestId,
+                id: parseInt(pr.pullRequestId, 10),
                 title: pr.title,
-                number: pr.pullRequestId,
+                number: parseInt(pr.pullRequestId, 10),
                 branch: pr.sourceRefName.replace('refs/heads/', ''),
                 author: pr.createdBy.displayName,
                 createdAt: pr.creationDate,

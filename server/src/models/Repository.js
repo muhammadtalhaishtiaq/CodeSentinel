@@ -26,7 +26,7 @@ const RepositorySchema = new mongoose.Schema({
     },
     isEnabled: {
         type: Boolean,
-        default: true
+        default: false
     },
     lastScanDate: {
         type: Date,

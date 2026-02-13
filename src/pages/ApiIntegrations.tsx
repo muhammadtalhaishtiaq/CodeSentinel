@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
-import { Github, Check, X, Loader, ExternalLink, Shield, AlertCircle, Cloud, Key, RefreshCw } from 'lucide-react';
+import { Github, Check, X, Loader, ExternalLink, Shield, AlertCircle, Cloud, Key, RefreshCw, Database, Eye, EyeOff } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
 import { useToast } from '@/components/ui/use-toast';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -44,6 +44,13 @@ const ApiIntegrations = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
   const [syncingProvider, setSyncingProvider] = useState<string | null>(null);
+  
+  // Repository management state
+  const [repositories, setRepositories] = useState<any[]>([]);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<'github' | 'azure' | 'bitbucket'>('azure');
+  const [togglingRepoId, setTogglingRepoId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState<string>('');
   
   // Azure manual PAT state
   const [azureOrganization, setAzureOrganization] = useState('');
@@ -111,6 +118,7 @@ const ApiIntegrations = () => {
 
   useEffect(() => {
     fetchOAuthStatus();
+    fetchRepositories();
   }, []);
 
   const fetchOAuthStatus = async () => {
@@ -143,7 +151,12 @@ const ApiIntegrations = () => {
         throw new Error('Authentication token missing. Please log in again.');
       }
       
-      // Open OAuth popup with token in query string
+      // TODO: Security improvement — the JWT token is passed in the URL query string so the
+      // backend `protect` middleware can authenticate this browser-navigated request. The token
+      // is only sent to our own backend (never forwarded to external OAuth providers), but
+      // passing tokens in URLs is not ideal because they can appear in server logs, browser
+      // history, and referrer headers. Consider moving to a short-lived, HttpOnly cookie-based
+      // session approach for OAuth popup authentication.
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
@@ -276,7 +289,25 @@ const ApiIntegrations = () => {
     }
   };
 
-  const handleSyncRepositories = async (provider: 'azure') => {
+  const fetchRepositories = async () => {
+    try {
+      setIsLoadingRepos(true);
+      const response = await authenticatedRequest('/api/integrations/repositories');
+      
+      if (response?.success && Array.isArray(response.data)) {
+        setRepositories(response.data);
+      } else {
+        setRepositories([]);
+      }
+    } catch (error) {
+      console.error('Error fetching repositories:', error);
+      setRepositories([]);
+    } finally {
+      setIsLoadingRepos(false);
+    }
+  };
+
+  const handleSyncRepositories = async (provider: 'github' | 'azure' | 'bitbucket') => {
     setSyncingProvider(provider);
     try {
       const response = await authenticatedRequest('/api/integrations/sync-repositories', {
@@ -289,6 +320,8 @@ const ApiIntegrations = () => {
           title: 'Sync Successful!',
           description: response.message || `Repositories synced from ${provider}`,
         });
+        // Refresh repositories list
+        await fetchRepositories();
       } else {
         throw new Error(response.message || 'Sync failed');
       }
@@ -300,6 +333,34 @@ const ApiIntegrations = () => {
       });
     } finally {
       setSyncingProvider(null);
+    }
+  };
+
+  const handleToggleRepository = async (repoId: string, currentState: boolean) => {
+    setTogglingRepoId(repoId);
+    try {
+      const response = await authenticatedRequest(`/api/integrations/repositories/${repoId}/toggle`, {
+        method: 'PATCH'
+      });
+
+      if (response.success) {
+        // Update local state
+        setRepositories(prev => prev.map(repo => 
+          repo._id === repoId ? { ...repo, isEnabled: !currentState } : repo
+        ));
+        toast({
+          title: 'Updated!',
+          description: `Repository ${!currentState ? 'enabled' : 'disabled'} for projects`,
+        });
+      }
+    } catch (error: any) {
+      toast({
+        title: 'Update Failed',
+        description: error.message || 'Failed to update repository',
+        variant: 'destructive',
+      });
+    } finally {
+      setTogglingRepoId(null);
     }
   };
 
@@ -630,6 +691,130 @@ const ApiIntegrations = () => {
                 );
               })}
             </div>
+
+            {/* Repository Management Section */}
+            {repositories.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center gap-2">
+                        <Database className="w-5 h-5 text-blue-600" />
+                        Synced Repositories
+                      </CardTitle>
+                      <CardDescription className="mt-1">
+                        Select which repositories to show in project creation
+                      </CardDescription>
+                    </div>
+                    <div className="flex gap-2">
+                      {['azure', 'github', 'bitbucket'].map((provider) => {
+                        const count = repositories.filter(r => r.provider === provider).length;
+                        const isActive = selectedProvider === provider;
+                        return (
+                          <Button
+                            key={provider}
+                            onClick={() => setSelectedProvider(provider as any)}
+                            variant={isActive ? 'default' : 'outline'}
+                            size="sm"
+                            className={isActive ? 'bg-blue-600' : ''}
+                          >
+                            {provider.charAt(0).toUpperCase() + provider.slice(1)} ({count})
+                          </Button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {isLoadingRepos ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader className="w-6 h-6 animate-spin text-blue-600" />
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {/* Search Input */}
+                      <div className="relative">
+                        <Input
+                          type="text"
+                          placeholder="Search repositories..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10"
+                        />
+                        <Database className="w-4 h-4 text-gray-400 absolute left-3 top-1/2 transform -translate-y-1/2" />
+                      </div>
+
+                      <div className="border rounded-lg overflow-hidden">
+                      <div className="max-h-[400px] overflow-y-auto">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 dark:bg-gray-900 sticky top-0">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Repository
+                              </th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Provider
+                              </th>
+                              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                                Show in Projects
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white dark:bg-gray-950 divide-y divide-gray-200 dark:divide-gray-800">
+                            {repositories
+                              .filter(repo => repo.provider === selectedProvider)
+                              .filter(repo => repo.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                              .map((repo) => (
+                                <tr key={repo._id} className="hover:bg-gray-50 dark:hover:bg-gray-900/50">
+                                  <td className="px-4 py-3 text-sm">
+                                    <div className="flex items-center gap-2">
+                                      {repo.isEnabled ? (
+                                        <Eye className="w-4 h-4 text-green-600" />
+                                      ) : (
+                                        <EyeOff className="w-4 h-4 text-gray-400" />
+                                      )}
+                                      <span className="font-medium text-gray-900 dark:text-gray-100">
+                                        {repo.name}
+                                      </span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-sm">
+                                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300">
+                                      {repo.provider}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-sm text-center">
+                                    <Button
+                                      onClick={() => handleToggleRepository(repo._id, repo.isEnabled)}
+                                      disabled={togglingRepoId === repo._id}
+                                      variant={repo.isEnabled ? 'default' : 'outline'}
+                                      size="sm"
+                                      className={repo.isEnabled ? 'bg-green-600 hover:bg-green-700' : ''}
+                                    >
+                                      {togglingRepoId === repo._id ? (
+                                        <Loader className="w-3 h-3 animate-spin" />
+                                      ) : repo.isEnabled ? (
+                                        <Check className="w-3 h-3" />
+                                      ) : (
+                                        <X className="w-3 h-3" />
+                                      )}
+                                    </Button>
+                                  </td>
+                                </tr>
+                              ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-900 px-4 py-2 text-xs text-gray-600 dark:text-gray-400">
+                        {repositories.filter(r => r.provider === selectedProvider && r.name.toLowerCase().includes(searchQuery.toLowerCase()) && r.isEnabled).length} of {repositories.filter(r => r.provider === selectedProvider && r.name.toLowerCase().includes(searchQuery.toLowerCase())).length} repositories enabled
+                        {searchQuery && ` • Filtered by: "${searchQuery}"`}
+                      </div>
+                    </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             {/* Help Section */}
             <Card className="bg-gradient-to-br from-purple-50 to-blue-50 dark:from-purple-950/20 dark:to-blue-950/20 border-purple-200 dark:border-purple-800">

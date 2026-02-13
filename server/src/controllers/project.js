@@ -317,9 +317,9 @@ exports.getLatestScan = async(req, res, next) => {
 exports.startScan = async(req, res) => {
     try {
         const projectId = req.params.id;
-        const { branch } = req.body;
+        const { branch, pullRequestNumber } = req.body;
 
-        console.log('[DEBUG] Starting scan for project:', { projectId, branch });
+        console.log('[DEBUG] Starting scan for project:', { projectId, branch, pullRequestNumber });
 
         if (!projectId || !branch) {
             return res.status(400).json({
@@ -363,7 +363,7 @@ exports.startScan = async(req, res) => {
         await project.save();
 
         // Start the scan process in the background
-        scanController.processScan(scan._id, projectId, branch, req.user._id)
+        scanController.processScan(scan._id, projectId, branch, req.user._id, pullRequestNumber)
             .catch(error => {
                 console.error('[DEBUG] Error in background scan process:', error);
                 // Update scan status to failed

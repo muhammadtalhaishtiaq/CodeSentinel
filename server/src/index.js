@@ -2,6 +2,8 @@ const express = require('express');
 const cors = require('cors');
 const path = require('path');
 const fileUpload = require('express-fileupload');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { connectDB } = require('./config/db');
 const errorHandler = require('./middleware/error');
 const config = require('./config/config');
@@ -18,6 +20,7 @@ const integrationRoutes = require('./routes/integration');
 const projectRoutes = require('./routes/project');
 const scanRoutes = require('./routes/scan');
 const oauthRoutes = require('./routes/oauth');
+const dashboardRoutes = require('./routes/dashboard');
 
 const app = express();
 
@@ -30,14 +33,44 @@ app.use(fileUpload({
     abortOnLimit: true
 }));
 
-// CORS configuration - allow requests from the same origin
+// CORS configuration - restrict to allowed origins
+const allowedOrigins = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.split(',') : ['http://localhost:5173'];
 app.use(cors({
-    origin: true, // Allow requests from the same origin
+    origin: function (origin, callback) {
+        // Allow requests with no origin (mobile apps, curl, etc.)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) !== -1) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
     credentials: true
 }));
 
+// Security headers
+app.use(helmet());
+
+// Rate limiting
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, please try again later.' }
+});
+app.use('/api/', generalLimiter);
+
+const authLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    message: { error: 'Too many authentication attempts, please try again later.' }
+});
+app.use('/api/auth', authLimiter);
+
 // API routes
 app.use('/api/auth', authRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/scans', scanRoutes);

@@ -138,7 +138,6 @@ exports.forgotPassword = async(req, res, next) => {
 
         // Create reset URL
         const resetUrl = `${process.env.BASE_URL}/reset-password/${resetToken}`;
-        console.log('Reset URL:', resetUrl);
         
         // Create message
         const message = `
@@ -225,9 +224,7 @@ exports.resetPassword = async(req, res, next) => {
 // @access  Private
 exports.updateProfile = async(req, res, next) => {
     try {
-        console.log('Update profile request received for user ID:', req.user._id);
         const { firstName, lastName, currentPassword, newPassword } = req.body;
-        console.log('Update fields:', { firstName, lastName, hasCurrentPassword: !!currentPassword, hasNewPassword: !!newPassword });
 
         // For additional security, re-fetch the user with password
         const user = await User.findById(req.user._id).select('+password');
@@ -240,9 +237,6 @@ exports.updateProfile = async(req, res, next) => {
             });
         }
 
-        console.log('User found for update:', user.email);
-        console.log('User has updateAndHashPassword method:', typeof user.updateAndHashPassword === 'function');
-
         // Update basic fields
         user.firstName = firstName;
         user.lastName = lastName;
@@ -252,13 +246,10 @@ exports.updateProfile = async(req, res, next) => {
 
         // Check if password update is requested
         if (currentPassword && newPassword) {
-            console.log('Password update requested');
 
             // Verify current password
             try {
-                console.log('Verifying current password');
                 const isMatch = await user.matchPassword(currentPassword);
-                console.log('Password match result:', isMatch);
 
                 if (!isMatch) {
                     return res.status(401).json({
@@ -279,16 +270,13 @@ exports.updateProfile = async(req, res, next) => {
         }
 
         // Save the basic user info first
-        console.log('Saving updated user info (without password changes)');
         await user.save();
 
         // Now handle password update if needed
         if (passwordUpdated) {
             try {
-                console.log('Now updating password separately');
                 // Manual fallback if method is missing
                 if (typeof user.updateAndHashPassword !== 'function') {
-                    console.log('updateAndHashPassword method not found, using direct approach');
                     user.password = newPassword;
                     user.markModified('password');
                     await user.save();
@@ -296,7 +284,6 @@ exports.updateProfile = async(req, res, next) => {
                     // Use our special method to ensure the password is marked as modified
                     await user.updateAndHashPassword(newPassword);
                 }
-                console.log('Password updated and hashed');
             } catch (error) {
                 console.error('Error updating password:', error);
                 return res.status(500).json({

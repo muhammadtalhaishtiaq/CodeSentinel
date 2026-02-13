@@ -226,10 +226,7 @@ exports.initiateAzureOAuth = (req, res) => {
 // @access  Public (but uses state token)
 exports.handleAzureCallback = async (req, res, next) => {
     try {
-        console.log('=== Azure OAuth Callback Started ===');
         const { code, state, error, error_description } = req.query;
-        
-        console.log('Query params:', { code: code ? 'present' : 'missing', state: state ? 'present' : 'missing', error, error_description });
 
         // Check if Azure returned an error
         if (error) {
@@ -270,16 +267,12 @@ exports.handleAzureCallback = async (req, res, next) => {
             `);
         }
 
-        console.log('Decoding state...');
         const decodedState = JSON.parse(Buffer.from(state, 'base64').toString());
         const userId = decodedState.userId;
-        console.log('User ID from state:', userId);
 
         const tenantId = process.env.AZURE_TENANT_ID || 'common';
-        console.log('Tenant ID:', tenantId);
 
         // Exchange code for access token using Microsoft Entra ID
-        console.log('Exchanging code for access token...');
         const tokenResponse = await axios.post(
             `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
             new URLSearchParams({
@@ -297,7 +290,6 @@ exports.handleAzureCallback = async (req, res, next) => {
             }
         );
 
-        console.log('Token exchange successful');
         const { access_token, refresh_token, expires_in } = tokenResponse.data;
 
         if (!access_token) {
@@ -468,7 +460,7 @@ exports.handleBitbucketCallback = async (req, res, next) => {
                     <body>
                         <script>
                             if (window.opener) {
-                                window.opener.postMessage({ type: 'oauth-error', provider: 'azure', error: 'no_token' }, '${process.env.FRONTEND_URL}');
+                                window.opener.postMessage({ type: 'oauth-error', provider: 'bitbucket', error: 'no_token' }, '${process.env.FRONTEND_URL}');
                                 window.close();
                             } else {
                                 window.location.href = '${process.env.FRONTEND_URL}/api-integrations?error=no_token';

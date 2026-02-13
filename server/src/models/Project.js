@@ -26,7 +26,7 @@ const ProjectSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['active', 'inactive', 'archived'],
+        enum: ['active', 'inactive', 'archived', 'deleted'],
         default: 'active'
     },
     summary: {

@@ -154,8 +154,8 @@ exports.getScanStatus = async(req, res) => {
 exports.startScan = async(req, res, next) => {
     console.log('[DEBUG] Starting scan...');
     try {
-        const { projectId, branch } = req.body;
-        console.log(`[DEBUG] Starting scan for projectId: ${projectId}, branch: ${branch}`);
+        const { projectId, branch, pullRequestNumber } = req.body;
+        console.log(`[DEBUG] Starting scan for projectId: ${projectId}, branch: ${branch}, PR: ${pullRequestNumber}`);
 
         if (!projectId || !branch) {
             console.log('[DEBUG] Missing required parameters:', { projectId, branch });
@@ -170,7 +170,7 @@ exports.startScan = async(req, res, next) => {
         const project = await Project.findOne({
             _id: projectId,
             user: req.user._id
-        });
+        }).populate('repository');
 
         if (!project) {
             console.log('[DEBUG] Project not found');
@@ -184,7 +184,7 @@ exports.startScan = async(req, res, next) => {
         console.log('[DEBUG] Creating new scan record...');
         const scan = await Scan.create({
             project: projectId,
-            user: req.user._id,
+            createdBy: req.user._id,
             status: 'pending',
             branch
         });
@@ -192,12 +192,15 @@ exports.startScan = async(req, res, next) => {
         // Update project's latest scan
         console.log('[DEBUG] Updating project with new scan...');
         project.latestScan = scan._id;
+        if (!project.scanHistory) {
+            project.scanHistory = [];
+        }
         project.scanHistory.push(scan._id);
         await project.save();
 
         // Start the scan process in background
         console.log('[DEBUG] Starting background scan process...');
-        processScan(scan._id, projectId, branch).catch(error => {
+        processScan(scan._id, projectId, branch, req.user._id, pullRequestNumber).catch(error => {
             console.error('[DEBUG] Error in background scan process:', error);
             // Update scan status to failed if background process fails
             Scan.findByIdAndUpdate(scan._id, {
@@ -218,99 +221,6 @@ exports.startScan = async(req, res, next) => {
     } catch (error) {
         console.error('[DEBUG] Error in startScan:', error);
         next(error);
-    }
-};
-
-// Background process for scanning
-const startScanningProcess = async(scanId, projectId, branch) => {
-    try {
-        // Find project and get repository details
-        const project = await Project.findById(projectId).populate('repository');
-        if (!project) {
-            throw new Error('Project not found');
-        }
-
-        // Get user's GitHub credentials
-        const credential = await SourceCredential.findOne({
-            user: project.user,
-            provider: 'github',
-            isActive: true
-        });
-
-        if (!credential || !credential.githubToken) {
-            throw new Error('No active GitHub credentials found');
-        }
-
-        // Fetch code from GitHub
-        const fetchResponse = await fetch(`https://api.github.com/repos/${project.repository.name}/contents`, {
-            method: 'GET',
-            headers: {
-                'Accept': 'application/vnd.github.v3+json',
-                'Authorization': `token ${credential.githubToken}`
-            }
-        });
-
-        if (!fetchResponse.ok) {
-            throw new Error('Failed to fetch repository code from GitHub');
-        }
-
-        const files = await fetchResponse.json();
-        const totalFiles = files.length;
-
-        console.log('[DEBUG] Total files:', totalFiles);
-        return false;
-
-        // Update scan record with total files
-        await Scan.findByIdAndUpdate(scanId, { totalFiles });
-
-        // Process each file
-        for (const file of files) {
-            if (file.type === 'file') {
-                // Fetch file content
-                const fileResponse = await fetch(file.download_url, {
-                    headers: {
-                        'Accept': 'application/vnd.github.v3.raw',
-                        'Authorization': `token ${credential.githubToken}`
-                    }
-                });
-
-                if (!fileResponse.ok) {
-                    console.error(`Failed to fetch file ${file.path}:`, fileResponse.statusText);
-                    continue;
-                }
-
-                const content = await fileResponse.text();
-
-                // Update scan progress
-                await Scan.findByIdAndUpdate(scanId, {
-                    $inc: { scannedFiles: 1 },
-                    currentFile: file.path
-                });
-
-                // Analyze file content for vulnerabilities
-                const vulnerabilities = await scanFile({ content, path: file.path });
-                if (vulnerabilities.length > 0) {
-                    await Scan.findByIdAndUpdate(scanId, {
-                        vulnerabilities: vulnerabilities,
-                        currentFile: file.path
-                    });
-                }
-            }
-        }
-
-        // Update scan status to completed
-        await Scan.findByIdAndUpdate(scanId, {
-            status: 'completed',
-            completedAt: Date.now()
-        });
-
-    } catch (error) {
-        console.error('Error in scanning process:', error);
-        await Scan.findByIdAndUpdate(scanId, {
-            status: 'failed',
-            error: error.message,
-            completedAt: Date.now()
-        });
     }
 };
 
@@ -360,23 +270,26 @@ function getDirectory(structure, path) {
 }
 
 // Update processScan function
-exports.processScan = async(scanId, projectId, branch, userId) => {
+const processScan = async(scanId, projectId, branch, userId, pullRequestNumber = null) => {
     try {
-        // Get user's GitHub credentials
-        const credential = await SourceCredential.findOne({
-            user: userId,
-            provider: 'github',
-            isActive: true
-        });
-
-        if (!credential || !credential.githubToken) {
-            throw new Error('No active GitHub credentials found');
-        }
-
         // First get project details to get repository information
         const project = await Project.findById(projectId).populate('repository');
         if (!project || !project.repository) {
             throw new Error('Project or repository not found');
+        }
+
+        const provider = project.repository.provider || 'github';
+        console.log(`[SCAN] Processing ${pullRequestNumber ? 'PR #' + pullRequestNumber : 'branch ' + branch} for ${provider}`);
+
+        // Get user's credentials for the correct provider
+        const credential = await SourceCredential.findOne({
+            user: userId,
+            provider,
+            isActive: true
+        });
+
+        if (!credential) {
+            throw new Error(`No active ${provider} credentials found`);
         }
 
         // Emit initial status
@@ -386,224 +299,642 @@ exports.processScan = async(scanId, projectId, branch, userId) => {
             console.error(`[ERROR] Failed to emit initial progress for scanId ${scanId}:`, error);
         }
 
-        // Fetch only changed files from GitHub
-        console.log(`[DEBUG] Fetching changes from GitHub for repo: ${project.repository.name}, branch: ${branch}`);
-        console.log(`[DEBUG] Using GitHub token: ${credential.githubToken ? 'Present' : 'Missing'}`);
+        let files = [];
 
-        try {
+        // ----- If PR number provided, scan ONLY PR files -----
+        if (pullRequestNumber) {
+            console.log(`[SCAN] Fetching files from PR #${pullRequestNumber}...`);
+            
+            if (provider === 'github') {
+                const token = credential.githubToken || credential.accessToken;
+                if (!token) throw new Error('No valid GitHub token found');
+
+                console.log(`[DEBUG] Calling GitHub API: /repos/${project.repository.name}/pulls/${pullRequestNumber}/files`);
+                const prFilesResponse = await fetch(`https://api.github.com/repos/${project.repository.name}/pulls/${pullRequestNumber}/files`, {
+                    headers: {
+                        'Authorization': `token ${token}`,
+                        'Accept': 'application/vnd.github.v3+json'
+                    },
+                    timeout: 60000
+                });
+
+                if (!prFilesResponse.ok) {
+                    throw new Error(`GitHub PR API error: ${prFilesResponse.statusText}`);
+                }
+
+                const prFiles = await prFilesResponse.json();
+                console.log(`[DEBUG] GitHub API returned ${prFiles.length} files from PR #${pullRequestNumber}`);
+                console.log(`[DEBUG] Files metadata:`, JSON.stringify(prFiles.map(f => ({
+                    filename: f.filename,
+                    status: f.status,
+                    additions: f.additions,
+                    deletions: f.deletions,
+                    changes: f.changes
+                })), null, 2));
+                
+                for (const file of prFiles) {
+                    console.log(`[DEBUG] Processing file: ${file.filename}, status: ${file.status}`);
+                    
+                    if (file.status !== 'removed') {
+                        try {
+                            console.log(`[DEBUG] Fetching content for: ${file.filename} from ${file.raw_url}`);
+                            const fileResponse = await fetch(file.raw_url, {
+                                headers: {
+                                    'Authorization': `token ${token}`,
+                                    'Accept': 'application/vnd.github.v3.raw'
+                                },
+                                timeout: 60000
+                            });
+                            if (fileResponse.ok) {
+                                const content = await fileResponse.text();
+                                console.log(`[DEBUG] ✅ Successfully fetched ${file.filename} (${content.length} chars, patch: ${file.patch?.length || 0} chars)`);
+                                files.push({ 
+                                    path: file.filename, 
+                                    content, 
+                                    raw_url: file.raw_url,
+                                    patch: file.patch,  // Diff of changes
+                                    additions: file.additions,
+                                    deletions: file.deletions,
+                                    isPR: true  // Flag to indicate PR scanning
+                                });
+                            } else {
+                                console.error(`[DEBUG] ❌ Failed to fetch ${file.filename}: HTTP ${fileResponse.status} ${fileResponse.statusText}`);
+                            }
+                        } catch (err) {
+                            console.error(`[DEBUG] ❌ Error fetching file ${file.filename}:`, err.message);
+                        }
+                    } else {
+                        console.log(`[DEBUG] ⏭️ Skipping removed file: ${file.filename}`);
+                    }
+                }
+                
+                console.log(`[DEBUG] 📊 GitHub PR file fetching complete:`);
+                console.log(`[DEBUG]    - API returned: ${prFiles.length} files`);
+                console.log(`[DEBUG]    - Successfully fetched: ${files.length} files`);
+                console.log(`[DEBUG]    - Files collected:`, files.map(f => f.path));
+
+            } else if (provider === 'azure') {
+                const pat = credential.azurePat;
+                if (!pat) throw new Error('No valid Azure DevOps PAT found');
+
+                const [org, projName, repoName] = project.repository.name.split('/');
+                const azureOrg = credential.azureOrganization || org;
+                const authHeader = 'Basic ' + Buffer.from(`:${pat}`).toString('base64');
+
+                console.log(`[DEBUG] Calling Azure API: /pullRequests/${pullRequestNumber}/iterations`);
+
+                const iterationsRes = await fetch(
+                    `https://dev.azure.com/${azureOrg}/${projName}/_apis/git/repositories/${repoName}/pullRequests/${pullRequestNumber}/iterations?api-version=7.0&$top=100`,
+                    { headers: { 'Authorization': authHeader, 'Accept': 'application/json' } }
+                );
+
+                if (!iterationsRes.ok) throw new Error(`Azure PR API error: ${iterationsRes.statusText}`);
+
+                const iterationsData = await iterationsRes.json();
+                const iterations = iterationsData.value || [];
+                console.log(`[DEBUG] Found ${iterations.length} iterations in Azure PR #${pullRequestNumber}`);
+
+                if (iterations.length > 0) {
+                    const latestIteration = iterations[iterations.length - 1];
+                    console.log(`[DEBUG] Fetching changes from latest iteration: ${latestIteration.id}`);
+
+                    const changesRes = await fetch(
+                        `https://dev.azure.com/${azureOrg}/${projName}/_apis/git/repositories/${repoName}/pullRequests/${pullRequestNumber}/iterations/${latestIteration.id}/changes?api-version=7.0&$top=1000`,
+                        { headers: { 'Authorization': authHeader, 'Accept': 'application/json' } }
+                    );
+
+                    if (!changesRes.ok) {
+                        throw new Error(`Azure PR changes API error: ${changesRes.statusText}`);
+                    }
+
+                    const changesData = await changesRes.json();
+                    const changeEntries = changesData.changeEntries || [];
+                    console.log(`[DEBUG] Azure iteration changes returned ${changeEntries.length} total items`);
+
+                    const prChangedFiles = changeEntries.filter(change =>
+                        change.item && change.item.path && !change.item.isFolder &&
+                        (change.changeType === 'edit' || change.changeType === 'add')
+                    );
+
+                    console.log(`[DEBUG] Filtered to ${prChangedFiles.length} changed files (blobs only, excluding removed)`);
+
+                    for (const change of prChangedFiles) {
+                        try {
+                            console.log(`[DEBUG] Fetching content for: ${change.item.path}`);
+                            const fileRes = await fetch(
+                                `https://dev.azure.com/${azureOrg}/${projName}/_apis/git/repositories/${repoName}/items?path=${encodeURIComponent(change.item.path)}&versionDescriptor.version=${branch}&api-version=7.0`,
+                                { headers: { 'Authorization': authHeader, 'Accept': 'text/plain' } }
+                            );
+                            if (fileRes.ok) {
+                                const content = await fileRes.text();
+                                console.log(`[DEBUG] ✅ Successfully fetched ${change.item.path} (${content.length} chars)`);
+                                files.push({
+                                    path: change.item.path,
+                                    content,
+                                    raw_url: change.item.path,
+                                    isPR: true
+                                });
+                            } else {
+                                console.error(`[DEBUG] ❌ Failed to fetch ${change.item.path}: HTTP ${fileRes.status}`);
+                            }
+                        } catch (err) {
+                            console.error(`[DEBUG] ❌ Error fetching Azure file ${change.item.path}:`, err.message);
+                        }
+                    }
+                }
+
+                console.log(`[DEBUG] 📊 Azure PR file fetching complete:`);
+                console.log(`[DEBUG]    - Successfully fetched: ${files.length} files`);
+                console.log(`[DEBUG]    - Files collected:`, files.map(f => f.path));
+
+            } else if (provider === 'bitbucket') {
+                const token = credential.accessToken || credential.bitbucketToken;
+                const username = credential.bitbucketUsername;
+                let authHeader;
+                if (credential.accessToken) {
+                    authHeader = `Bearer ${token}`;
+                } else {
+                    authHeader = 'Basic ' + Buffer.from(`${username}:${token}`).toString('base64');
+                }
+
+                const diffStatRes = await fetch(
+                    `https://api.bitbucket.org/2.0/repositories/${project.repository.name}/pullrequests/${pullRequestNumber}/diffstat`,
+                    { headers: { 'Authorization': authHeader, 'Accept': 'application/json' } }
+                );
+
+                if (!diffStatRes.ok) throw new Error(`Bitbucket PR API error: ${diffStatRes.statusText}`);
+
+                const diffStatData = await diffStatRes.json();
+                const prChangedFiles = (diffStatData.values || []).filter(f => f.status !== 'removed');
+
+                for (const file of prChangedFiles) {
+                    const filePath = file.new ? file.new.path : (file.old ? file.old.path : null);
+                    if (!filePath) continue;
+                    try {
+                        const fileRes = await fetch(
+                            `https://api.bitbucket.org/2.0/repositories/${project.repository.name}/src/${branch}/${encodeURIComponent(filePath)}`,
+                            { headers: { 'Authorization': authHeader } }
+                        );
+                        if (fileRes.ok) {
+                            const content = await fileRes.text();
+                            files.push({ path: filePath, content, raw_url: filePath });
+                        }
+                    } catch (err) {
+                        console.error(`Failed to fetch Bitbucket file ${filePath}:`, err.message);
+                    }
+                }
+            }
+
+            console.log(`[SCAN] Fetched ${files.length} files from PR #${pullRequestNumber}`);
+        } else {
+            // ----- No PR number: Fetch changed files based on branch comparison -----
+            console.log(`[SCAN] Fetching files from branch comparison (main...${branch})...`);
+
+        // ----- Fetch changed files based on provider -----
+        if (provider === 'github') {
+            const token = credential.githubToken || credential.accessToken;
+            if (!token) throw new Error('No valid GitHub token found');
+
             const fetchResponse = await fetch(`https://api.github.com/repos/${project.repository.name}/compare/main...${branch}`, {
                 method: 'GET',
                 headers: {
                     'Accept': 'application/vnd.github.v3+json',
-                    'Authorization': `token ${credential.githubToken}`
+                    'Authorization': `token ${token}`
                 },
                 timeout: 60000
             });
 
             if (!fetchResponse.ok) {
                 const errorData = await fetchResponse.json();
-                console.error(`[ERROR] GitHub API error: ${fetchResponse.status} - ${errorData.message}`);
-                throw new Error(`Failed to fetch repository code from GitHub: ${errorData.message}`);
+                throw new Error(`GitHub API error: ${errorData.message || fetchResponse.statusText}`);
             }
 
             const compareData = await fetchResponse.json();
-            console.log(`[DEBUG] Successfully fetched ${compareData.files?.length || 0} files from GitHub`);
-            const files = compareData.files.filter(file =>
+            const changedFiles = (compareData.files || []).filter(file =>
                 file.status === 'modified' || file.status === 'added'
             );
-            const totalFiles = files.length;
 
-            // Update scan with total files and emit progress (25%)
+            // Fetch content for each changed file
+            for (const file of changedFiles) {
+                try {
+                    const fileResponse = await fetch(file.raw_url, {
+                        headers: {
+                            'Accept': 'application/vnd.github.v3.raw',
+                            'Authorization': `token ${token}`
+                        },
+                        timeout: 60000
+                    });
+                    if (fileResponse.ok) {
+                        const content = await fileResponse.text();
+                        files.push({ path: file.filename, content, raw_url: file.raw_url });
+                    }
+                } catch (err) {
+                    console.error(`Failed to fetch file ${file.filename}:`, err.message);
+                }
+            }
+
+        } else if (provider === 'azure') {
+            const pat = credential.azurePat;
+            if (!pat) throw new Error('No valid Azure DevOps PAT found');
+
+            const [org, projName, repoName] = project.repository.name.split('/');
+            const azureOrg = credential.azureOrganization || org;
+            const authHeader = 'Basic ' + Buffer.from(`:${pat}`).toString('base64');
+
+            // Get commits in the branch to find changes
+            const commitsRes = await fetch(
+                `https://dev.azure.com/${azureOrg}/${projName}/_apis/git/repositories/${repoName}/commits?searchCriteria.itemVersion.version=${branch}&api-version=7.0&$top=1`,
+                { headers: { 'Authorization': authHeader, 'Accept': 'application/json' } }
+            );
+
+            if (!commitsRes.ok) throw new Error(`Azure DevOps API error: ${commitsRes.statusText}`);
+
+            const commitsData = await commitsRes.json();
+            if (commitsData.value && commitsData.value.length > 0) {
+                const lastCommit = commitsData.value[0];
+                const changesRes = await fetch(
+                    `https://dev.azure.com/${azureOrg}/${projName}/_apis/git/repositories/${repoName}/commits/${lastCommit.commitId}/changes?api-version=7.0`,
+                    { headers: { 'Authorization': authHeader, 'Accept': 'application/json' } }
+                );
+
+                if (changesRes.ok) {
+                    const changesData = await changesRes.json();
+                    const changedFiles = (changesData.changes || []).filter(c =>
+                        c.item && c.item.gitObjectType === 'blob' && !c.item.isFolder &&
+                        (c.changeType === 'edit' || c.changeType === 'add')
+                    );
+
+                    for (const change of changedFiles) {
+                        try {
+                            const fileRes = await fetch(
+                                `https://dev.azure.com/${azureOrg}/${projName}/_apis/git/repositories/${repoName}/items?path=${encodeURIComponent(change.item.path)}&versionDescriptor.version=${branch}&api-version=7.0`,
+                                { headers: { 'Authorization': authHeader, 'Accept': 'text/plain' } }
+                            );
+                            if (fileRes.ok) {
+                                const content = await fileRes.text();
+                                files.push({ path: change.item.path, content, raw_url: change.item.path });
+                            }
+                        } catch (err) {
+                            console.error(`Failed to fetch Azure file ${change.item.path}:`, err.message);
+                        }
+                    }
+                }
+            }
+
+        } else if (provider === 'bitbucket') {
+            const token = credential.accessToken || credential.bitbucketToken;
+            const username = credential.bitbucketUsername;
+            let authHeader;
+            if (credential.accessToken) {
+                authHeader = `Bearer ${token}`;
+            } else {
+                authHeader = 'Basic ' + Buffer.from(`${username}:${token}`).toString('base64');
+            }
+
+            // Bitbucket: get diff stat for the branch
+            const diffStatRes = await fetch(
+                `https://api.bitbucket.org/2.0/repositories/${project.repository.name}/diffstat/${branch}`,
+                { headers: { 'Authorization': authHeader, 'Accept': 'application/json' } }
+            );
+
+            if (!diffStatRes.ok) throw new Error(`Bitbucket API error: ${diffStatRes.statusText}`);
+
+            const diffStatData = await diffStatRes.json();
+            const changedFiles = (diffStatData.values || []).filter(f =>
+                f.status !== 'removed'
+            );
+
+            for (const file of changedFiles) {
+                const filePath = file.new ? file.new.path : (file.old ? file.old.path : null);
+                if (!filePath) continue;
+                try {
+                    const fileRes = await fetch(
+                        `https://api.bitbucket.org/2.0/repositories/${project.repository.name}/src/${branch}/${encodeURIComponent(filePath)}`,
+                        { headers: { 'Authorization': authHeader } }
+                    );
+                    if (fileRes.ok) {
+                        const content = await fileRes.text();
+                        files.push({ path: filePath, content, raw_url: filePath });
+                    }
+                } catch (err) {
+                    console.error(`Failed to fetch Bitbucket file ${filePath}:`, err.message);
+                }
+            }
+        }
+        } // End of else block (branch comparison for non-PR scans)
+
+        console.log(`[DEBUG] Fetched ${files.length} files from ${provider} for scanning`);
+        const totalFiles = files.length;
+
+        // ⚠️ DEBUG FLAG: Set to true to skip AI scanning and verify file fetching only
+        const SKIP_AI_SCAN = true;  // 🔴 TEMPORARILY ENABLED FOR DEBUGGING - Change to false after verification
+        
+        if (SKIP_AI_SCAN) {
+            console.log(`[DEBUG] 🚫 SKIP_AI_SCAN is enabled - skipping AI analysis, returning file list only`);
+            console.log(`[DEBUG] Files that would be scanned:`, files.map(f => ({
+                path: f.path,
+                contentSize: f.content?.length || 0,
+                patchSize: f.patch?.length || 0,
+                isPR: f.isPR || false
+            })));
+            
+            // Complete scan immediately with file info
             await Scan.findByIdAndUpdate(scanId, {
-                totalFiles: files.length,
-                progress: 25,
-                message: 'Scanning files...'
-            });
-            try {
-                sharedEmitter.emit('scan-progress', { scanId, progress: 25, message: 'Scanning files...' });
-            } catch (error) {
-                console.error(`[ERROR] Failed to emit 25% progress for scanId ${scanId}:`, error);
-            }
-
-            let scannedFiles = 0;
-            let allVulnerabilities = [];
-
-            // Process each file
-            for (const file of files) {
-                const fileResponse = await fetch(file.raw_url, {
-                    headers: {
-                        'Accept': 'application/vnd.github.v3.raw',
-                        'Authorization': `token ${credential.githubToken}`
-                    },
-                    timeout: 60000
-                });
-
-                if (!fileResponse.ok) {
-                    console.error(`Failed to fetch file ${file.raw_url}:`, fileResponse.statusText);
-                    continue;
-                }
-
-                const content = await fileResponse.text();
-                scannedFiles++;
-
-                // Update scan progress and emit update (25-75%)
-                const currentProgress = Math.min(25 + Math.floor((scannedFiles / files.length) * 50), 75);
-                await Scan.findByIdAndUpdate(scanId, {
-                    $inc: { scannedFiles: 1 },
-                    currentFile: file.raw_url,
-                    progress: currentProgress,
-                    message: `Scanned ${scannedFiles} of ${files.length} files...`
-                });
-                let file_extension = file.raw_url.split('.').pop();
-                let vulnerabilities = await scanFile(content, file.raw_url, file_extension);
-                console.log('vulnerabilities', vulnerabilities);
-                if (vulnerabilities.length > 0) {
-                    console.log('All vulnerabilities before concat', allVulnerabilities);
-                    allVulnerabilities = allVulnerabilities.concat(vulnerabilities);
-                    console.log('All vulnerabilities after concat', allVulnerabilities);
-                }
-            }
-
-            console.log('=== Starting Scan Results Processing ===');
-            console.log(`Total vulnerabilities found: ${allVulnerabilities.length}`);
-            console.log('Sample vulnerability:', allVulnerabilities[0]);
-
-            // Calculate summary
-            const summary = {
-                total: allVulnerabilities.length,
-                lowCount: allVulnerabilities.filter(v => v.severity === 'low').length,
-                mediumCount: allVulnerabilities.filter(v => v.severity === 'medium').length,
-                highCount: allVulnerabilities.filter(v => v.severity === 'high').length,
-                criticalCount: allVulnerabilities.filter(v => v.severity === 'critical').length
-            };
-
-            console.log('\n=== Vulnerability Summary ===');
-            console.log('Summary counts:', summary);
-
-            // Prepare final result while maintaining schema structure
-            const finalResult = {
-                progress: 100,
-                message: 'Scan completed',
                 status: 'completed',
+                progress: 100,
+                message: 'Debug: File fetching verified',
+                completedAt: Date.now(),
+                totalFiles,
+                scannedFiles: totalFiles,
                 result: {
-                    vulnerabilities: allVulnerabilities.map(vuln => ({
-                        type: vuln.type,
-                        severity: vuln.severity,
-                        description: vuln.description,
-                        location: vuln.file_path,
-                        lineNumber: vuln.line_number,
-                        file_path: vuln.file_path,
-                        file_name: vuln.file_name,
-                        file_extension: vuln.file_extension,
-                        original_code: vuln.original_code,
-                        suggested_code: vuln.suggested_code,
-                        potential_impact: vuln.potential_impact,
-                        potential_solution: vuln.potential_solution,
-                        potential_risk: vuln.potential_risk,
-                        potential_mitigation: vuln.potential_mitigation,
-                        potential_prevention: vuln.potential_prevention,
-                        potential_detection: vuln.potential_detection
-                    })),
-                    summary: summary
+                    vulnerabilities: [],
+                    summary: { total: 0, lowCount: 0, mediumCount: 0, highCount: 0, criticalCount: 0 },
+                    debug: {
+                        filesCollected: files.map(f => f.path),
+                        totalFiles: files.length,
+                        message: 'AI scanning skipped for debugging'
+                    }
                 }
-            };
-
-            console.log('\n=== Final Result Structure ===');
-            console.log('Result keys:', Object.keys(finalResult.result));
-            console.log('Result summary:', finalResult.result.summary);
-            console.log('Number of vulnerabilities:', finalResult.result.vulnerabilities.length);
-
-            // Update scan with results
-            await Scan.findByIdAndUpdate(scanId, finalResult);
-
-            // Show last saved scan results in console
-            const lastScan = await Scan.findById(scanId);
-            console.log('\n=== Saved Scan Results ===');
-            console.log('Scan ID:', lastScan._id);
-            console.log('Status:', lastScan.status);
-            console.log('Progress:', lastScan.progress);
-            console.log('Message:', lastScan.message);
-            console.log('Result summary:', lastScan.result.summary);
-            console.log('Number of vulnerabilities:', lastScan.result.vulnerabilities.length);
-
-        } catch (error) {
-            console.error('Error in fetching changes from GitHub:', error);
-            await Scan.findByIdAndUpdate(scanId, {
-                status: 'failed',
-                error: error.message,
-                completedAt: Date.now()
             });
+            
+            sharedEmitter.emit('scan-progress', { scanId, progress: 100, message: 'Debug: File fetching verified' });
+            console.log(`[DEBUG] ✅ Scan completed in debug mode - ${totalFiles} files collected`);
+            return;
         }
 
+        // Update scan with total files and emit progress (25%)
+        await Scan.findByIdAndUpdate(scanId, {
+            totalFiles,
+            progress: 25,
+            message: 'Scanning files...'
+        });
+        try {
+            sharedEmitter.emit('scan-progress', { scanId, progress: 25, message: 'Scanning files...' });
+        } catch (error) {
+            console.error(`[ERROR] Failed to emit 25% progress for scanId ${scanId}:`, error);
+        }
+
+        let scannedFiles = 0;
+        let allVulnerabilities = [];
+
+        // **OPTIMIZED: Batch files intelligently and process in parallel**
+        const batches = createSmartBatches(files, pullRequestNumber ? true : false);
+        console.log(`[SCAN] Created ${batches.length} batches for ${files.length} files`);
+
+        const CONCURRENT_BATCHES = 3; // Process 3 batches concurrently
+        
+        for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
+            const currentBatches = batches.slice(i, i + CONCURRENT_BATCHES);
+            
+            // Process batches in parallel
+            const batchResults = await Promise.all(
+                currentBatches.map(batch => scanBatch(batch, pullRequestNumber ? true : false))
+            );
+
+            // Aggregate results
+            for (const batchVulns of batchResults) {
+                allVulnerabilities = allVulnerabilities.concat(batchVulns);
+                scannedFiles += batchVulns.filesScanned || 1;
+                
+                const currentProgress = Math.min(25 + Math.floor((scannedFiles / totalFiles) * 50), 75);
+                await Scan.findByIdAndUpdate(scanId, {
+                    scannedFiles,
+                    progress: currentProgress,
+                    message: `Scanned ${scannedFiles} of ${totalFiles} files...`
+                });
+            }
+        }
+
+        // Calculate summary
+        const summary = {
+            total: allVulnerabilities.length,
+            lowCount: allVulnerabilities.filter(v => v.severity === 'low').length,
+            mediumCount: allVulnerabilities.filter(v => v.severity === 'medium').length,
+            highCount: allVulnerabilities.filter(v => v.severity === 'high').length,
+            criticalCount: allVulnerabilities.filter(v => v.severity === 'critical').length
+        };
+
+        // Prepare final result
+        const finalResult = {
+            progress: 100,
+            message: 'Scan completed',
+            status: 'completed',
+            completedAt: Date.now(),
+            result: {
+                vulnerabilities: allVulnerabilities.map(vuln => ({
+                    type: vuln.type,
+                    severity: vuln.severity,
+                    description: vuln.description,
+                    location: vuln.file_path,
+                    lineNumber: vuln.line_number,
+                    file_path: vuln.file_path,
+                    file_name: vuln.file_name,
+                    file_extension: vuln.file_extension,
+                    original_code: vuln.original_code,
+                    suggested_code: vuln.suggested_code,
+                    potential_impact: vuln.potential_impact,
+                    potential_solution: vuln.potential_solution,
+                    potential_risk: vuln.potential_risk,
+                    potential_mitigation: vuln.potential_mitigation,
+                    potential_prevention: vuln.potential_prevention,
+                    potential_detection: vuln.potential_detection
+                })),
+                summary
+            }
+        };
+
+        // Update scan with results
+        await Scan.findByIdAndUpdate(scanId, finalResult);
+
+        // Emit completion
+        try {
+            sharedEmitter.emit('scan-progress', { scanId, progress: 100, message: 'Scan completed' });
+        } catch (error) {
+            console.error(`[ERROR] Failed to emit completion for scanId ${scanId}:`, error);
+        }
+
+        console.log(`[SCAN] Completed scan ${scanId}: ${summary.total} vulnerabilities found`);
+
     } catch (error) {
-        console.error('\n=== Error in processScan ===');
-        console.error('Error details:', error);
+        console.error(`[ERROR] processScan failed for scanId ${scanId}:`, error.message);
         await Scan.findByIdAndUpdate(scanId, {
             status: 'failed',
             error: error.message,
             completedAt: Date.now()
         });
+        try {
+            sharedEmitter.emit('scan-progress', { scanId, progress: -1, message: `Scan failed: ${error.message}` });
+        } catch (emitError) {
+            // ignore
+        }
     }
 };
 
-//2nd call for file scanning in which we are calling LLM for analysis and in result we are getting vulnerabilities
-// Helper function to scan a single file
-const scanFile = async(content, fileName, file_extension) => {
-    // console.log([content, fileName, file_extension]);
-    try {
-        console.log(`[DEBUG] Scanning file: ${fileName}`);
-        const vulnerabilities = [];
+// **NEW: Smart batching - groups files intelligently**
+function createSmartBatches(files, isPRScan) {
+    const batches = [];
+    const MAX_BATCH_SIZE = isPRScan ? 5 : 3; // PR scans: batch more (smaller diffs)
+    const MAX_BATCH_CONTENT_SIZE = 8000; // Max ~8k characters per batch (for context window)
+    
+    let currentBatch = [];
+    let currentBatchSize = 0;
+    
+    for (const file of files) {
+        const contentSize = isPRScan && file.patch 
+            ? file.patch.length  // Use patch size for PR (much smaller)
+            : file.content.length;
+        
+        // If file alone is too large, create single-file batch
+        if (contentSize > MAX_BATCH_CONTENT_SIZE) {
+            if (currentBatch.length > 0) {
+                batches.push(currentBatch);
+                currentBatch = [];
+                currentBatchSize = 0;
+            }
+            batches.push([file]);
+            continue;
+        }
+        
+        // If adding this file would exceed limits, start new batch
+        if (currentBatch.length >= MAX_BATCH_SIZE || 
+            currentBatchSize + contentSize > MAX_BATCH_CONTENT_SIZE) {
+            batches.push(currentBatch);
+            currentBatch = [];
+            currentBatchSize = 0;
+        }
+        
+        currentBatch.push(file);
+        currentBatchSize += contentSize;
+    }
+    
+    // Add remaining batch
+    if (currentBatch.length > 0) {
+        batches.push(currentBatch);
+    }
+    
+    return batches;
+}
 
-        // Analyze code with LLM
-        const analysisResults = await analyzeCodeWithLLM(content, fileName, file_extension);
-        console.log(['Befor pushing into vulnerabilities array ', analysisResults]);
+// **NEW: Scan a batch of files with single AI call**
+async function scanBatch(batch, isPRScan) {
+    try {
+        if (batch.length === 1) {
+            // Single file - use existing logic
+            const file = batch[0];
+            const file_extension = file.path.split('.').pop();
+            const contentToScan = isPRScan && file.patch ? file.patch : file.content;
+            const vulns = await scanFile(contentToScan, file.path, file_extension, isPRScan);
+            vulns.filesScanned = 1;
+            return vulns;
+        }
+        
+        // Multiple files - batch them
+        const vulnerabilities = [];
+        const language = 'multi-language';
+        
+        // Build combined prompt with all files
+        let filesContent = '';
+        for (const file of batch) {
+            const ext = file.path.split('.').pop();
+            const lang = getLanguageFromExtension('.' + ext);
+            const contentToScan = isPRScan && file.patch 
+                ? `DIFF/PATCH (analyze ONLY changed lines):\n${file.patch}` 
+                : file.content;
+            
+            filesContent += `\n\n--- FILE: ${file.path} (${lang}) ---\n${contentToScan}\n`;
+        }
+        
+        const prompt = `
+        You are a security expert code reviewer. Analyze the following ${batch.length} files for security vulnerabilities.
+        
+        ${isPRScan ? '⚠️ PR SCAN MODE: Focus ONLY on changed lines (marked with +/- in diffs). Do not analyze unchanged code.' : ''}
+        
+        FILES TO ANALYZE:
+        ${filesContent}
+        
+        Focus on: SQL injection, XSS, CSRF, insecure auth, input validation, cryptography, data exposure, dependencies, and code quality issues.
+        
+        For each issue found, return a JSON object with: type, severity (low/medium/high/critical), description, location (file path), lineNumber, file_extension, file_name, file_path, original_code, suggested_code, potential_impact, potential_risk, potential_solution, potential_mitigation, potential_prevention, potential_detection.
+        
+        If no issues are found, return an empty array. Only return the JSON array with no other text.
+        `;
+
+        // API call
+        const response = await axios({
+            method: 'post',
+            url: 'https://api.aimlapi.com/v1/chat/completions',
+            headers: {
+                'Authorization': `Bearer ${process.env.AIMLAPI_KEY}`,
+                'Content-Type': 'application/json'
+            },
+            data: {
+                model: 'claude-3-7-sonnet-20250219',
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.1,
+                max_tokens: 4000
+            },
+            timeout: 90000  // 90s for batches
+        });
+
+        const content = response.data.choices[0].message.content.trim();
+        const match = content.match(/\[[\s\S]*\]/);
+        const jsonStr = match ? match[0] : content;
+        const parsed = JSON.parse(jsonStr);
+        
+        vulnerabilities.push(...parsed.filter(v => 
+            v && v.type && v.severity && ['low', 'medium', 'high', 'critical'].includes(v.severity)
+        ));
+        
+        vulnerabilities.filesScanned = batch.length;
+        console.log(`[SCAN] Batch of ${batch.length} files: ${vulnerabilities.length} vulnerabilities found`);
+        return vulnerabilities;
+        
+    } catch (error) {
+        console.error(`[ERROR] Error scanning batch:`, error.message);
+        return { filesScanned: batch.length };
+    }
+}
+
+//2nd call for file scanning in which we are calling LLM for analysis
+const scanFile = async(content, fileName, file_extension, isPRScan = false) => {
+    try {
+        const vulnerabilities = [];
+        const analysisResults = await analyzeCodeWithLLM(content, fileName, file_extension, isPRScan);
         vulnerabilities.push(...analysisResults);
-        console.log(['After pushing into vulnerabilities array ', vulnerabilities]);
         return vulnerabilities;
     } catch (error) {
-        console.error(`[DEBUG] Error scanning file: ${fileName}`, error);
+        console.error(`[ERROR] Error scanning file: ${fileName}`, error.message);
         return [];
     }
 };
 
-//3rd call for file scanning in which we are calling LLM for analysis and in result we are getting vulnerabilities
-// Helper function to analyze code with Claude 3.7 Sonnet
-async function analyzeCodeWithLLM(code, fileName, file_extension) {
+// Analyze code with Claude 3.7 Sonnet via AIML API
+async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = false) {
     try {
-        // console.log(`[DEBUG] Analyzing code with LLM: ${fileName}`);
-
-        // Check if API key is set
         if (!process.env.AIMLAPI_KEY) {
             console.error('[ERROR] AIMLAPI_KEY environment variable is not set');
-            // Return mock data in development mode or empty in production
             if (process.env.NODE_ENV === 'development') {
-                console.log('[DEBUG] Using mock data for development');
                 return [{
                     type: "Mock Vulnerability",
                     severity: "medium",
                     description: "This is a mock vulnerability for testing. AIMLAPI_KEY is not set.",
                     location: fileName,
-                    lineNumber: 1
+                    lineNumber: 1,
+                    file_path: fileName,
+                    file_name: fileName.split('/').pop(),
+                    file_extension: file_extension
                 }];
             }
             return [];
         }
 
-        // Determine language from file extension
-        // const extension = path.extname(fileName).toLowerCase();
         const language = getLanguageFromExtension('.' + file_extension);
+        const codeType = isPRScan ? 'DIFF/PATCH (changed lines only)' : 'full file code';
 
-        console.log([
-            "language",
-            language,
-            "extension",
-            file_extension
-        ]);
-
-        // Prepare prompt for LLM
         const prompt = `
-        You are a security expert code reviewer with expertise in identifying security vulnerabilities, bugs, and code quality issues. 
-        Your task is to analyze the following ${language} code for security vulnerabilities and quality issues.
+        You are a security expert code reviewer. Analyze the following ${language} ${codeType} for security vulnerabilities and quality issues.
+        
+        ${isPRScan ? '⚠️ PR SCAN MODE: This is a diff/patch showing ONLY changed lines. Focus your analysis on the changes (lines marked with + or -). Ignore context lines unless they directly relate to the vulnerability.' : ''}
         
         File: ${fileName}
         
@@ -612,145 +943,64 @@ async function analyzeCodeWithLLM(code, fileName, file_extension) {
         ${code}
         \`\`\`
         
-        Analyze the code for security vulnerabilities and issues. Focus on:
-        1. Security vulnerabilities (SQL injection, XSS, CSRF, insecure authentication, etc.)
-        2. Input validation issues
-        3. Authentication/authorization flaws
-        4. Insecure cryptography
-        5. Data exposure issues
-        6. Dependencies with known vulnerabilities
-        7. Code quality issues that may lead to security problems
-        8. Any other issues that you think are important
-        9. If you are not sure about the severity, use 'medium'
-        10. If you are not sure about the type, use 'Security Issue'
-        11. If you are not sure about the location, use 'Unknown'
-        12. Make sure to include the line number of the issue
-        13. Make sure to include the file name of the issue
+        Focus on: SQL injection, XSS, CSRF, insecure auth, input validation, cryptography, data exposure, dependencies, and code quality issues.
         
-        For each issue found, return a JSON object with the following information:
-        - type: The type of vulnerability or issue
-        - severity: Use only 'low', 'medium', 'high', or 'critical'
-        - description: A detailed explanation of the issue
-        - location: The specific function, method, or section where the issue is found
-        - lineNumber: Approximate line number where the issue exists (if any issue is found)
-        - file_extension: The extension of the file
-        - file_name: The name of the file
-        - file_path: The path of the file
-        - original_code: The original code that is vulnerable
-        - suggested_code: The suggested code to fix the issue
-        - potential_error: The potential error that can occur if the issue is not fixed
-        - potential_impact: The potential impact of the issue
-        - potential_risk: The potential risk of the issue
-        - potential_solution: The potential solution to fix the issue
-        - potential_mitigation: The potential mitigation to fix the issue
-        - potential_prevention: The potential prevention to fix the issue
-        - potential_detection: The potential detection to fix the issue
-        
+        For each issue found, return a JSON object with: type, severity (low/medium/high/critical), description, location, lineNumber, file_extension, file_name, file_path, original_code, suggested_code, potential_impact, potential_risk, potential_solution, potential_mitigation, potential_prevention, potential_detection.
         
         If no issues are found, return an empty array. Only return the JSON array with no other text.
         `;
 
-        // console.log([
-        //     "prompt",
-        //     prompt
-        // ]);
-
-        // try {
-        // Simple API call with retries
+        // API call with retry
         let response = null;
-        let retries = 0;
-        const maxRetries = 1;
+        const maxRetries = 2;
 
-        // while (!response && retries < maxRetries) {
-        // try {
-        // Call Claude 3.7 Sonnet via AIMLAPI according to docs
-        // console.log(`[DEBUG] Attempting API call (attempt ${retries+1}/${maxRetries})`);
-
-        // Try with x-api-key header instead of Authorization
-        console.log('AIMLAPI_KEY', '0a1961ec336d4c14bb852f50b54fe191');
-        response = await axios({
-            method: 'post',
-            url: 'https://api.aimlapi.com/v1/chat/completions',
-            headers: {
-                'Authorization': `Bearer 0a1961ec336d4c14bb852f50b54fe191`,
-                'Content-Type': 'application/json',
-                'Accept': '*/*'
-            },
-            data: {
-                model: 'claude-3-7-sonnet-20250219',
-                messages: [
-                    // { role: 'system', content: 'You are a security-focused static code analysis tool.' },
-                    { role: 'user', content: prompt }
-                ],
-                temperature: 0.1,
-                max_tokens: 4000,
-            },
-            timeout: 60000 // 60 second timeout
-        });
-
-        // console.log(`[DEBUG] API call successful for ${fileName}`);
-        //     } catch (apiError) {
-        //         retries++;
-        //         console.error(`[ERROR] API call failed (attempt ${retries}/${maxRetries}):`, apiError.message);
-
-        //         // Log more details about the error
-        //         if (apiError.response) {
-        //             console.error(`[ERROR] Status: ${apiError.response.status}, Data:`, apiError.response.data);
-        //         }
-
-        //         if (retries >= maxRetries) {
-        //             throw apiError; // Re-throw if max retries reached
-        //         }
-
-        //         // Simple delay between retries
-        //         await new Promise(resolve => setTimeout(resolve, 2000 * retries));
-        //     }
-        // }
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                response = await axios({
+                    method: 'post',
+                    url: 'https://api.aimlapi.com/v1/chat/completions',
+                    headers: {
+                        'Authorization': `Bearer ${process.env.AIMLAPI_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Accept': '*/*'
+                    },
+                    data: {
+                        model: 'claude-3-7-sonnet-20250219',
+                        messages: [{ role: 'user', content: prompt }],
+                        temperature: 0.1,
+                        max_tokens: 4000,
+                    },
+                    timeout: 60000
+                });
+                break; // Success — exit retry loop
+            } catch (apiError) {
+                console.error(`[ERROR] API call failed (attempt ${attempt}/${maxRetries}) for ${fileName}:`, apiError.message);
+                if (attempt >= maxRetries) throw apiError;
+                await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
+            }
+        }
 
         if (!response) {
             throw new Error('Failed to get response from API after retries');
         }
 
-        // console.log(`[DEBUG] LLM response received for ${fileName}`);
-
-        // Extract vulnerabilities from response
+        // Extract and parse vulnerabilities from response
         const content = response.data.choices[0].message.content.trim();
 
-        // console.log([
-        //     "content",
-        //     content
-        // ]);
-
-        // Try to parse vulnerabilities
         try {
-            // Find JSON array in the response if not a clean JSON
             const match = content.match(/\[[\s\S]*\]/);
             const jsonStr = match ? match[0] : content;
-
             const vulnerabilities = JSON.parse(jsonStr);
 
-            // Validate and clean up vulnerabilities
-            const validVulnerabilities = vulnerabilities.filter(v =>
+            return vulnerabilities.filter(v =>
                 v && v.type && v.severity && v.description && ['low', 'medium', 'high', 'critical'].includes(v.severity)
             );
-
-            console.log(`[DEBUG] Found ${validVulnerabilities.length} vulnerabilities in ${fileName}`);
-            return validVulnerabilities;
         } catch (parseError) {
-            console.error(`[ERROR] Failed to parse LLM response for ${fileName}:`, parseError);
-            console.log(`[DEBUG] Raw LLM response:`, content);
+            console.error(`[ERROR] Failed to parse LLM response for ${fileName}:`, parseError.message);
             return [];
         }
-        // } catch (apiError) {
-        //     console.error(`[ERROR] API error when analyzing code with LLM:`, apiError.message);
-        //     if (apiError.response) {
-        //         console.error(`[ERROR] API response:`, apiError.response.data);
-        //     }
-        //     // Return empty results on failure
-        //     return [];
-        // }
     } catch (error) {
-        console.error(`[ERROR] Error analyzing code with LLM:`, error);
+        console.error(`[ERROR] Error analyzing code with LLM for ${fileName}:`, error.message);
         return [];
     }
 }
@@ -975,3 +1225,5 @@ exports.getScanStatus = async(req, res) => {
         });
     }
 };
+
+exports.processScan = processScan;

@@ -944,9 +944,9 @@ exports.getPullRequests = async(req, res, next) => {
 
         // Fetch PRs based on provider
         if (repository.provider === 'github') {
-            // GitHub API
+            // GitHub API - Get ALL PRs (open + closed + draft)
             const response = await fetchWithTimeout(
-                `https://api.github.com/repos/${repository.name}/pulls?state=open`,
+                `https://api.github.com/repos/${repository.name}/pulls?state=all&per_page=100`,
                 {
                     headers: {
                         'Authorization': `token ${credential.githubToken}`,
@@ -971,9 +971,9 @@ exports.getPullRequests = async(req, res, next) => {
             }));
 
         } else if (repository.provider === 'bitbucket') {
-            // Bitbucket API
+            // Bitbucket API - Get ALL PRs (all statuses)
             const response = await fetchWithTimeout(
-                `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests?state=OPEN`,
+                `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests?state=OPEN&state=MERGED&state=DECLINED&pagelen=100`,
                 {
                     headers: {
                         'Authorization': `Basic ${Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64')}`,
@@ -998,13 +998,12 @@ exports.getPullRequests = async(req, res, next) => {
             }));
 
         } else if (repository.provider === 'azure') {
-            // Azure DevOps API
+            // Azure DevOps API - Get ALL PRs (all statuses: active, completed, abandoned)
             const [org, project, repo] = repository.name.split('/');
             const azureOrg = credential.azureOrganization || org;
             
             const response = await fetchWithTimeout(
-                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullrequests?api-version=7.0`,
-                // &searchCriteria.status=active
+                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullrequests?searchCriteria.status=all&api-version=7.0`,
                 {
                     headers: {
                         'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
@@ -1031,7 +1030,12 @@ exports.getPullRequests = async(req, res, next) => {
 
         res.status(200).json({
             success: true,
-            data: pullRequests
+            data: pullRequests,
+            message: `Retrieved ${pullRequests.length} pull requests`,
+            debug: {
+                provider: repository.provider,
+                fetchedAt: new Date().toISOString()
+            }
         });
 
     } catch (error) {
@@ -1088,23 +1092,43 @@ exports.getPullRequestFiles = async(req, res, next) => {
 
         // Fetch PR file changes based on provider
         if (repository.provider === 'github') {
-            // GitHub API - Get PR files
-            const response = await fetchWithTimeout(
-                `https://api.github.com/repos/${repository.name}/pulls/${pullRequestNumber}/files`,
-                {
-                    headers: {
-                        'Authorization': `token ${credential.githubToken}`,
-                        'Accept': 'application/vnd.github.v3+json'
+            // GitHub API - Get PR files with pagination (max 100 per page)
+            let allFiles = [];
+            let page = 1;
+            let hasMore = true;
+
+            while (hasMore) {
+                const response = await fetchWithTimeout(
+                    `https://api.github.com/repos/${repository.name}/pulls/${pullRequestNumber}/files?per_page=100&page=${page}`,
+                    {
+                        headers: {
+                            'Authorization': `token ${credential.githubToken}`,
+                            'Accept': 'application/vnd.github.v3+json'
+                        }
+                    }
+                );
+
+                if (!response.ok) {
+                    throw new Error(`GitHub API error: ${response.statusText}`);
+                }
+
+                const data = await response.json();
+                
+                if (!Array.isArray(data) || data.length === 0) {
+                    hasMore = false;
+                } else {
+                    allFiles = allFiles.concat(data);
+                    page++;
+                    // Safety limit
+                    if (allFiles.length > 5000) {
+                        hasMore = false;
                     }
                 }
-            );
-
-            if (!response.ok) {
-                throw new Error(`GitHub API error: ${response.statusText}`);
             }
 
-            const data = await response.json();
-            files = data.map(file => ({
+            console.log(`[DEBUG] Found ${allFiles.length} files in GitHub PR #${pullRequestNumber}`);
+            
+            files = allFiles.map(file => ({
                 filename: file.filename,
                 status: file.status, // added, removed, modified, renamed
                 additions: file.additions,
@@ -1117,22 +1141,52 @@ exports.getPullRequestFiles = async(req, res, next) => {
             }));
 
         } else if (repository.provider === 'bitbucket') {
-            // Bitbucket API - Get PR diff
-            const response = await fetchWithTimeout(
-                `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests/${pullRequestNumber}/diffstat`,
-                {
-                    headers: {
-                        'Authorization': `Basic ${Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64')}`,
-                        'Accept': 'application/json'
+            // Bitbucket API - Get PR diff with pagination
+            let allFiles = [];
+            let page = 1;
+            let maxPages = 50; // Prevent infinite loops
+            let pageCount = 0;
+
+            while (pageCount < maxPages && allFiles.length < 5000) {
+                try {
+                    const response = await fetchWithTimeout(
+                        `https://api.bitbucket.org/2.0/repositories/${repository.name}/pullrequests/${pullRequestNumber}/diffstat?pagelen=100&page=${page}`,
+                        {
+                            headers: {
+                                'Authorization': `Basic ${Buffer.from(`${credential.bitbucketUsername}:${credential.bitbucketToken}`).toString('base64')}`,
+                                'Accept': 'application/json'
+                            }
+                        }
+                    );
+
+                    if (!response.ok) {
+                        console.warn(`Bitbucket page ${page} API error: ${response.statusText} - stopping pagination`);
+                        break;
                     }
+
+                    const data = await response.json();
+                    const values = data.values || [];
+                    
+                    if (values.length === 0) {
+                        break;
+                    }
+                    
+                    allFiles = allFiles.concat(values);
+                    
+                    // Check if there are more pages
+                    if (!data.next) {
+                        break;
+                    }
+                    
+                    page++;
+                    pageCount++;
+                } catch (err) {
+                    console.warn(`Bitbucket pagination error at page ${page}:`, err.message);
+                    break;
                 }
-            );
-
-            if (!response.ok) {
-                throw new Error(`Bitbucket API error: ${response.statusText}`);
             }
-
-            const data = await response.json();
+            
+            console.log(`[DEBUG] Fetched ${allFiles.length} files from Bitbucket PR #${pullRequestNumber} (${pageCount} pages)`);
             
             // Fetch the actual diff for each file
             const diffResponse = await fetchWithTimeout(
@@ -1147,7 +1201,7 @@ exports.getPullRequestFiles = async(req, res, next) => {
 
             const diffText = await diffResponse.text();
 
-            files = (data.values || []).map(file => ({
+            files = allFiles.map(file => ({
                 filename: file.new?.path || file.old?.path || 'unknown',
                 status: file.status, // added, removed, modified
                 additions: file.lines_added || 0,
@@ -1159,34 +1213,14 @@ exports.getPullRequestFiles = async(req, res, next) => {
             }));
 
         } else if (repository.provider === 'azure') {
-            // Azure DevOps API
+            // Azure DevOps API - Use PR iterations endpoint (faster, no sequential calls)
             const [org, project, repo] = repository.name.split('/');
             const azureOrg = credential.azureOrganization || org;
             
-            // Get PR commits to find changes
-            const commitsResponse = await fetchWithTimeout(
-                `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullRequests/${pullRequestNumber}/commits?api-version=7.0`,
-                {
-                    headers: {
-                        'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
-                        'Accept': 'application/json'
-                    }
-                }
-            );
-
-            if (!commitsResponse.ok) {
-                throw new Error(`Azure DevOps API error: ${commitsResponse.statusText}`);
-            }
-
-            const commitsData = await commitsResponse.json();
-            
-            if (commitsData.value && commitsData.value.length > 0) {
-                // Get the last commit to find changed files
-                const lastCommit = commitsData.value[commitsData.value.length - 1];
-                
-                // Get changes for this commit
-                const changesResponse = await fetchWithTimeout(
-                    `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/commits/${lastCommit.commitId}/changes?api-version=7.0`,
+            try {
+                // Get PR iterations - this contains all accumulated changes
+                const iterationsResponse = await fetchWithTimeout(
+                    `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullRequests/${pullRequestNumber}/iterations?api-version=7.0&$top=100`,
                     {
                         headers: {
                             'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
@@ -1195,32 +1229,57 @@ exports.getPullRequestFiles = async(req, res, next) => {
                     }
                 );
 
-                if (changesResponse.ok) {
-                    const changesData = await changesResponse.json();
+                if (iterationsResponse.ok) {
+                    const iterationsData = await iterationsResponse.json();
+                    const iterations = iterationsData.value || [];
                     
-                    // Filter out folders, only keep files (gitObjectType === 'blob')
-                    files = (changesData.changes || [])
-                        .filter(change => {
-                            // Only include actual files (blobs), not folders (trees)
-                            return change.item && 
-                                   change.item.gitObjectType === 'blob' && 
-                                   change.item.path && 
-                                   !change.item.isFolder;
-                        })
-                        .map(change => ({
-                            filename: change.item.path,
-                            status: change.changeType?.toLowerCase() || 'modified', // edit, add, delete
-                            additions: 0, // Azure doesn't provide this in the same way
-                            deletions: 0,
-                            changes: 0,
-                            objectId: change.item.objectId,
-                            url: change.item.url
-                        }));
+                    console.log(`[DEBUG] Found ${iterations.length} iterations in Azure PR #${pullRequestNumber}`);
+                    
+                    if (iterations.length > 0) {
+                        // Get the LATEST iteration (contains all accumulated changes from all commits)
+                        const latestIteration = iterations[iterations.length - 1];
+                        
+                        const changesResponse = await fetchWithTimeout(
+                            `https://dev.azure.com/${azureOrg}/${project}/_apis/git/repositories/${repo}/pullRequests/${pullRequestNumber}/iterations/${latestIteration.id}/changes?api-version=7.0&$top=1000`,
+                            {
+                                headers: {
+                                    'Authorization': `Basic ${Buffer.from(`:${credential.azurePat}`).toString('base64')}`,
+                                    'Accept': 'application/json'
+                                }
+                            }
+                        );
+
+                        if (changesResponse.ok) {
+                            const changesData = await changesResponse.json();
+                            const changes = changesData.changeEntries || [];
+                            
+                            files = changes
+                                .filter(change => change.item && change.item.path && !change.item.isFolder)
+                                .map(change => ({
+                                    filename: change.item.path,
+                                    status: change.changeType?.toLowerCase() || 'modified',
+                                    additions: 0,
+                                    deletions: 0,
+                                    changes: 0,
+                                    objectId: change.item.objectId,
+                                    url: change.item.url
+                                }));
+                            
+                            console.log(`[DEBUG] Fetched ${files.length} files from Azure PR #${pullRequestNumber} (Latest iteration #${latestIteration.id})`);
+                        } else {
+                            console.warn(`Azure changes API error: ${changesResponse.statusText}`);
+                        }
+                    }
+                } else {
+                    console.warn(`Azure iterations API error: ${iterationsResponse.statusText}`);
                 }
+            } catch (err) {
+                console.error(`Azure PR files error: ${err.message}`);
+                files = [];
             }
         }
 
-        console.log(`[DEBUG] Found ${files.length} changed files in PR #${pullRequestNumber}`);
+        console.log(`[DEBUG] Found ${files.length} changed files in PR #${pullRequestNumber} from repo: ${repository.name}`);
 
         res.status(200).json({
             success: true,
@@ -1229,6 +1288,12 @@ exports.getPullRequestFiles = async(req, res, next) => {
                 totalFiles: files.length,
                 totalAdditions: files.reduce((sum, f) => sum + (f.additions || 0), 0),
                 totalDeletions: files.reduce((sum, f) => sum + (f.deletions || 0), 0)
+            },
+            message: `Retrieved ${files.length} files from PR #${pullRequestNumber}`,
+            debug: {
+                provider: repository.provider,
+                pullRequestNumber,
+                fetchedAt: new Date().toISOString()
             }
         });
 

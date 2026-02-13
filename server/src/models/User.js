@@ -36,29 +36,17 @@ const UserSchema = new mongoose.Schema({
 
 // Encrypt password using bcrypt
 UserSchema.pre('save', async function(next) {
-    console.log('Pre-save hook triggered');
-    console.log('Is password modified:', this.isModified('password'));
-
     // Only hash the password if it's modified (or new)
     if (!this.isModified('password')) {
-        console.log('Password not modified, skipping hashing');
         return next();
     }
 
     try {
-        console.log('Hashing password...');
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(this.password, salt);
-        console.log('Password hashed successfully');
-
-        // Store the original password for debugging
-        const originalPassword = this.password;
 
         // Set the hashed password
         this.password = hashedPassword;
-
-        console.log('Password before:', originalPassword.substring(0, 3) + '***');
-        console.log('Password after:', hashedPassword.substring(0, 10) + '...');
 
         next();
     } catch (error) {
@@ -76,12 +64,7 @@ UserSchema.methods.matchPassword = async function(enteredPassword) {
             return false;
         }
 
-        console.log('Comparing passwords:');
-        console.log('Entered password length:', enteredPassword.length);
-        console.log('Stored password (partial):', this.password.substring(0, 10) + '...');
-
         const isMatch = await bcrypt.compare(enteredPassword, this.password);
-        console.log('Password comparison result:', isMatch);
         return isMatch;
     } catch (error) {
         console.error('Error comparing passwords:', error);

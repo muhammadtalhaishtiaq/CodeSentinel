@@ -5,25 +5,16 @@ const User = require('../models/User');
 exports.protect = async(req, res, next) => {
     let token;
 
-    // Debug request headers
-    console.log('Auth headers:', req.headers.authorization);
-
     // Check if auth header exists and starts with Bearer
     if (
         req.headers.authorization &&
         req.headers.authorization.startsWith('Bearer')
     ) {
-        // Set token from Bearer token in header
         token = req.headers.authorization.split(' ')[1];
-        console.log('Token extracted from Authorization header');
     } else if (req.query.token) {
-        // Set token from query parameter (for OAuth popups)
         token = req.query.token;
-        console.log('Token extracted from query parameter');
     } else if (req.cookies && req.cookies.token) {
-        // Set token from cookie
         token = req.cookies.token;
-        console.log('Token extracted from cookies');
     }
 
     // Make sure token exists
@@ -38,7 +29,6 @@ exports.protect = async(req, res, next) => {
     try {
         // Verify token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        console.log('Token verified successfully for user ID:', decoded.id);
 
         // Find user by id from decoded token
         const user = await User.findById(decoded.id);
@@ -53,8 +43,6 @@ exports.protect = async(req, res, next) => {
 
         // Attach user to request object
         req.user = user;
-        console.log('User attached to request:', user.email);
-
         next();
     } catch (err) {
         console.error('Authentication error:', err.message);

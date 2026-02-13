@@ -1,15 +1,38 @@
 const mongoose = require('mongoose');
 
 const ScanSchema = new mongoose.Schema({
+    project: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Project'
+    },
     repositoryUrl: {
         type: String,
-        required: [true, 'Please add a repository URL'],
-        trim: true
+        trim: true,
+        default: null
+    },
+    branch: {
+        type: String,
+        trim: true,
+        default: null
     },
     status: {
         type: String,
         enum: ['pending', 'in-progress', 'completed', 'failed'],
         default: 'pending'
+    },
+    progress: {
+        type: Number,
+        default: 0,
+        min: 0,
+        max: 100
+    },
+    message: {
+        type: String,
+        default: null
+    },
+    currentFile: {
+        type: String,
+        default: null
     },
     totalFiles: {
         type: Number,
@@ -43,7 +66,11 @@ const ScanSchema = new mongoose.Schema({
             original_code: String,
             suggested_code: String,
             potential_impact: String,
-            potential_solution: String
+            potential_solution: String,
+            potential_risk: String,
+            potential_mitigation: String,
+            potential_prevention: String,
+            potential_detection: String
         }],
         summary: {
             total: { type: Number, default: 0 },
@@ -64,5 +91,9 @@ const ScanSchema = new mongoose.Schema({
     },
     completedAt: Date
 });
+
+// Index for efficient querying
+ScanSchema.index({ project: 1, createdAt: -1 });
+ScanSchema.index({ createdBy: 1, status: 1 });
 
 module.exports = mongoose.model('Scan', ScanSchema);

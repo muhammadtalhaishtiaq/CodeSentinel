@@ -102,6 +102,7 @@ EMAIL_FROM=your_email@gmail.com
 
 # AI/ML API
 AIMLAPI_KEY=your_aimlapi_key
+AIML_MODEL=gpt-4o-mini  # Options: gpt-4o-mini, gpt-4o, claude-3-5-sonnet, etc.
 ```
 
 ### 2. MongoDB Atlas Setup

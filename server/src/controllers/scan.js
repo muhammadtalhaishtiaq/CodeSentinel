@@ -627,7 +627,7 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
         const totalFiles = files.length;
 
         // ⚠️ DEBUG FLAG: Set to true to skip AI scanning and verify file fetching only
-        const SKIP_AI_SCAN = true;  // 🔴 TEMPORARILY ENABLED FOR DEBUGGING - Change to false after verification
+        const SKIP_AI_SCAN = false;  // ✅ AI SCANNING ENABLED with optimizations (batching + parallel + GPT-4o-mini)
         
         if (SKIP_AI_SCAN) {
             console.log(`[DEBUG] 🚫 SKIP_AI_SCAN is enabled - skipping AI analysis, returning file list only`);
@@ -859,7 +859,8 @@ async function scanBatch(batch, isPRScan) {
         If no issues are found, return an empty array. Only return the JSON array with no other text.
         `;
 
-        // API call
+        // API call with configurable model from environment variable
+        const aiModel = process.env.AIML_MODEL;
         const response = await axios({
             method: 'post',
             url: 'https://api.aimlapi.com/v1/chat/completions',
@@ -868,7 +869,7 @@ async function scanBatch(batch, isPRScan) {
                 'Content-Type': 'application/json'
             },
             data: {
-                model: 'claude-3-7-sonnet-20250219',
+                model: aiModel,
                 messages: [{ role: 'user', content: prompt }],
                 temperature: 0.1,
                 max_tokens: 4000
@@ -953,6 +954,7 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
         // API call with retry
         let response = null;
         const maxRetries = 2;
+        const aiModel = process.env.AIML_MODEL;  // Set in .env file
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -965,7 +967,7 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
                         'Accept': '*/*'
                     },
                     data: {
-                        model: 'claude-3-7-sonnet-20250219',
+                        model: aiModel,
                         messages: [{ role: 'user', content: prompt }],
                         temperature: 0.1,
                         max_tokens: 4000,

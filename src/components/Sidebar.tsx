@@ -1,7 +1,7 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
-import { Home, Plus, BarChart2, Settings, Key, Shield, Code, Users, Building, FileCode, BookOpen, LogOut } from 'lucide-react';
+import { Home, Plus, BarChart2, Settings, Key, Shield, Code, Users, Building, FileCode, BookOpen, LogOut, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 
 const sidebarItems = [
@@ -62,34 +62,65 @@ interface SidebarProps {
   onToggle?: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onToggle }) => {
+const Sidebar: React.FC<SidebarProps> = ({ collapsed: externalCollapsed, onToggle }) => {
   const location = useLocation();
   const { logout } = useAuth();
+  const [collapsed, setCollapsed] = useState(() => {
+    // Get initial state from localStorage or default to false
+    const saved = localStorage.getItem('sidebarCollapsed');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  // Persist to localStorage whenever collapsed state changes
+  useEffect(() => {
+    localStorage.setItem('sidebarCollapsed', JSON.stringify(collapsed));
+  }, [collapsed]);
+
+  const handleToggle = () => {
+    setCollapsed(!collapsed);
+    onToggle?.();
+  };
+
+  // Use external collapsed prop if provided, otherwise use internal state
+  const isCollapsed = externalCollapsed !== undefined ? externalCollapsed : collapsed;
   
   return (
     <aside 
       className={cn(
-        "bg-white border-r border-gray-200 h-screen transition-all duration-300 flex flex-col",
-        collapsed ? "w-20" : "w-64"
+        "bg-white border-r border-gray-200 min-h-screen transition-all duration-300 flex flex-col relative",
+        isCollapsed ? "w-20" : "w-64"
       )}
     >
-      <div className="p-4">
-          {/* <div className="flex justify-center"> */}
-            {/* <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
-              <span className="text-white font-bold">C</span>
-            </div> */}
-          {/* </div> */}
-          <div className="flex items-center justify-center space-x-2">
-            <Link to="/">
-              <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-18 h-14" />
-            </Link>
-            {/* <div className="w-8 h-8 bg-indigo-600 rounded-md flex items-center justify-center">
-              <span className="text-white font-bold">C</span>
-            </div> */}
-              {/* <span className="text-xl font-bold text-indigo-600">CodeSentinel</span> */}
-
-          </div>
+      {/* Toggle Button */}
+      <div className="flex items-center justify-between p-4">
+        {!isCollapsed && (
+          <Link to="/">
+            <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-18 h-14" />
+          </Link>
+        )}
+        <button
+          onClick={handleToggle}
+          className={cn(
+            "p-1.5 hover:bg-gray-100 rounded-md transition-colors",
+            isCollapsed && "mx-auto"
+          )}
+          title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {isCollapsed ? (
+            <ChevronRight className="h-5 w-5 text-gray-600" />
+          ) : (
+            <ChevronLeft className="h-5 w-5 text-gray-600" />
+          )}
+        </button>
       </div>
+      
+      {isCollapsed && (
+        <div className="flex items-center justify-center p-2">
+          <Link to="/">
+            <img src="/images/logo.png" alt="CodeSentinel Logo" className="w-10 h-10" />
+          </Link>
+        </div>
+      )}
       
       <nav className="mt-8 flex-grow">
         <ul className="space-y-2 px-2">
@@ -98,12 +129,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onToggle }) => {
               <Link
                 to={item.path}
                 className={cn(
-                  "flex items-center px-4 py-3 text-slate-600 rounded-md hover:bg-indigo-50 hover:text-indigo-600 transition-colors",
-                  location.pathname === item.path && "bg-indigo-50 text-indigo-600 font-medium"
+                  "flex items-center px-4 py-3 text-slate-600 rounded-md hover:bg-indigo-50 hover:text-indigo-600 transition-colors justify-center",
+                  location.pathname === item.path && "bg-indigo-50 text-indigo-600 font-medium",
+                  !isCollapsed && "justify-start"
                 )}
+                title={isCollapsed ? item.name : undefined}
               >
                 <span className="mr-3">{item.icon}</span>
-                {!collapsed && <span>{item.name}</span>}
+                {!isCollapsed && <span>{item.name}</span>}
               </Link>
             </li>
           ))}
@@ -114,10 +147,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed = false, onToggle }) => {
       <div className="mt-auto p-4 border-t border-gray-200">
         <button
           onClick={logout}
-          className="flex items-center w-full px-4 py-3 text-slate-600 rounded-md hover:bg-red-50 hover:text-red-600 transition-colors"
+          className={cn(
+            "flex items-center w-full px-4 py-3 text-slate-600 rounded-md hover:bg-red-50 hover:text-red-600 transition-colors justify-center",
+            !isCollapsed && "justify-start"
+          )}
+          title={isCollapsed ? "Logout" : undefined}
         >
           <span className="mr-3"><LogOut className="h-5 w-5" /></span>
-          {!collapsed && <span>Logout</span>}
+          {!isCollapsed && <span>Logout</span>}
         </button>
       </div>
     </aside>

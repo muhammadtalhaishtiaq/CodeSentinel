@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import Header from '@/components/Header';
 import Sidebar from '@/components/Sidebar';
-import { AlertTriangle, CheckCircle, FileCode, Send, ShieldAlert, Info, ChevronDown, ChevronRight, Copy, Check, Folder } from 'lucide-react';
+import { AlertTriangle, CheckCircle, FileCode, Send, ShieldAlert, Info, ChevronDown, ChevronRight, Copy, Check, Folder, ChevronLeft } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
 import ProjectChat from '@/components/ProjectChat';
 
@@ -58,6 +58,8 @@ interface ProjectDetail {
     provider: string;
   };
   status: string;
+  branch?: string;
+  pullRequestNumber?: number;
   latestScan?: LatestScan;
   scanHistory: LatestScan[];
   createdAt: string;
@@ -69,7 +71,29 @@ interface FileWithVulnerabilities {
   name: string;
   vulnerabilityCount: number;
   vulnerabilities: Vulnerability[];
+  maxSeverity: Vulnerability['severity'];
 }
+
+type SeverityFilter = 'all' | 'critical' | 'high' | 'medium' | 'low';
+
+type FileTreeNode =
+  | {
+      type: 'folder';
+      name: string;
+      path: string;
+      children: Record<string, FileTreeNode>;
+      fileCount: number;
+      issueCount: number;
+      maxSeverity: Vulnerability['severity'];
+    }
+  | {
+      type: 'file';
+      name: string;
+      path: string;
+      issueCount: number;
+      maxSeverity: Vulnerability['severity'];
+      file: FileWithVulnerabilities;
+    };
 
 // Get badge color based on severity
 const getSeverityBadge = (severity: string) => {
@@ -101,12 +125,47 @@ const getSeverityBadge = (severity: string) => {
   }
 };
 
+const severityRank: Record<Vulnerability['severity'], number> = {
+  critical: 4,
+  high: 3,
+  medium: 2,
+  low: 1
+};
+
+const getHigherSeverity = (
+  a: Vulnerability['severity'],
+  b: Vulnerability['severity']
+) => (severityRank[a] >= severityRank[b] ? a : b);
+
+const getMaxSeverity = (vulns: Vulnerability[]) =>
+  vulns.reduce(
+    (max, vuln) => getHigherSeverity(max, vuln.severity),
+    'low' as Vulnerability['severity']
+  );
+
+const getSeverityDot = (severity: Vulnerability['severity']) => {
+  switch (severity) {
+    case 'critical':
+      return 'bg-red-600';
+    case 'high':
+      return 'bg-orange-500';
+    case 'medium':
+      return 'bg-amber-400';
+    default:
+      return 'bg-emerald-400';
+  }
+};
+
 const ProjectDetail = () => {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [projectData, setProjectData] = useState<ProjectDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+  const [isRescanning, setIsRescanning] = useState(false);
+  const [fileSearch, setFileSearch] = useState('');
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all');
   const [chatMessages, setChatMessages] = useState<Array<{text: string, isUser: boolean}>>([]);
   const [chatInput, setChatInput] = useState('');
   const [openPanels, setOpenPanels] = useState<{
@@ -116,6 +175,8 @@ const ProjectDetail = () => {
   const [selectedImpact, setSelectedImpact] = useState<Vulnerability | null>(null);
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'tree' | 'list'>('tree');
   
   // Organize vulnerabilities by file
   const filesWithVulnerabilities: FileWithVulnerabilities[] = React.useMemo(() => {
@@ -133,12 +194,18 @@ const ProjectDetail = () => {
           path: vuln.file_path,
           name: vuln.file_name,
           vulnerabilityCount: 1,
-          vulnerabilities: [vuln]
+          vulnerabilities: [vuln],
+          maxSeverity: vuln.severity
         });
       }
     });
-    
-    return Array.from(fileMap.values()).sort((a, b) => b.vulnerabilityCount - a.vulnerabilityCount);
+
+    return Array.from(fileMap.values())
+      .map(file => ({
+        ...file,
+        maxSeverity: getMaxSeverity(file.vulnerabilities)
+      }))
+      .sort((a, b) => b.vulnerabilityCount - a.vulnerabilityCount);
   }, [projectData?.latestScan?.result?.vulnerabilities]);
 
   // Get vulnerability counts by severity
@@ -168,16 +235,6 @@ const ProjectDetail = () => {
           if (response.data.latestScan?.result?.vulnerabilities?.length > 0) {
             const firstFile = response.data.latestScan.result.vulnerabilities[0].file_path;
             setSelectedFilePath(firstFile);
-            
-            // Expand all parent folders of the first file
-            const pathParts = firstFile.split('/');
-            const expandedPaths = new Set<string>();
-            let currentPath = '';
-            for (let i = 0; i < pathParts.length - 1; i++) {
-              currentPath = currentPath ? `${currentPath}/${pathParts[i]}` : pathParts[i];
-              expandedPaths.add(currentPath);
-            }
-            setExpandedFolders(expandedPaths);
           }
         } else {
           setError('Failed to fetch project details');
@@ -213,11 +270,42 @@ const ProjectDetail = () => {
       setChatMessages(prev => [...prev, aiResponse]);
     }, 1000);
   };
+
+  const handleRescan = async () => {
+    if (!projectData?._id || !projectData.branch) {
+      setError('Project branch is missing. Please refresh the page.');
+      return;
+    }
+
+    try {
+      setIsRescanning(true);
+      const response = await authenticatedRequest(`/api/projects/${projectData._id}/start-scan`, {
+        method: 'POST',
+        body: JSON.stringify({
+          branch: projectData.branch,
+          pullRequestNumber: projectData.pullRequestNumber
+        })
+      });
+
+      if (!response?.data?._id) {
+        throw new Error('Scan ID is missing in response.');
+      }
+
+      navigate(`/project/${projectData._id}/scan/${response.data._id}`);
+    } catch (rescanError) {
+      console.error('Error initiating rescan:', rescanError);
+      setError('Failed to start rescan. Please try again.');
+    } finally {
+      setIsRescanning(false);
+    }
+  };
   
   // Get vulnerabilities for the selected file
   const selectedFileVulnerabilities = filesWithVulnerabilities.find(
     f => f.path === selectedFilePath
   )?.vulnerabilities || [];
+
+  const selectedFile = filesWithVulnerabilities.find(f => f.path === selectedFilePath) || null;
   
   // Add toggle panel function
   const togglePanel = (panelId: string) => {
@@ -239,79 +327,182 @@ const ProjectDetail = () => {
   };
 
   // Add function to build file tree
-  const buildFileTree = (files: FileWithVulnerabilities[]) => {
-    const tree: any = {};
-    
+  const buildFileTree = (files: FileWithVulnerabilities[]): FileTreeNode => {
+    const root: FileTreeNode = {
+      type: 'folder',
+      name: 'root',
+      path: '',
+      children: {},
+      fileCount: 0,
+      issueCount: 0,
+      maxSeverity: 'low'
+    };
+
     files.forEach(file => {
-      const parts = file.path.split('/');
-      let current = tree;
-      
+      const parts = file.path.split('/').filter(Boolean);
+      let current = root;
+
+      current.fileCount += 1;
+      current.issueCount += file.vulnerabilityCount;
+      current.maxSeverity = getHigherSeverity(current.maxSeverity, file.maxSeverity);
+
       for (let i = 0; i < parts.length - 1; i++) {
         const part = parts[i];
-        if (!current[part]) {
-          current[part] = {};
+        if (!current.children[part]) {
+          current.children[part] = {
+            type: 'folder',
+            name: part,
+            path: current.path ? `${current.path}/${part}` : part,
+            children: {},
+            fileCount: 0,
+            issueCount: 0,
+            maxSeverity: 'low'
+          };
         }
-        current = current[part];
+        current = current.children[part] as FileTreeNode;
+        if (current.type === 'folder') {
+          current.fileCount += 1;
+          current.issueCount += file.vulnerabilityCount;
+          current.maxSeverity = getHigherSeverity(current.maxSeverity, file.maxSeverity);
+        }
       }
-      
-      current[parts[parts.length - 1]] = file;
+
+      const fileName = parts[parts.length - 1] || file.name;
+      current.children[fileName] = {
+        type: 'file',
+        name: fileName,
+        path: file.path,
+        issueCount: file.vulnerabilityCount,
+        maxSeverity: file.maxSeverity,
+        file
+      };
     });
-    
-    return tree;
+
+    return root;
   };
 
-  // Add function to render file tree
-  const renderFileTree = (tree: any, path: string = '') => {
-    return Object.entries(tree).map(([name, value]) => {
-      const currentPath = path ? `${path}/${name}` : name;
-      const isFolder = typeof value === 'object' && !('vulnerabilityCount' in value);
-      const isExpanded = expandedFolders.has(currentPath);
+  const filteredFiles = React.useMemo(() => {
+    const search = fileSearch.trim().toLowerCase();
+    return filesWithVulnerabilities.filter(file => {
+      const matchesSearch = !search || file.path.toLowerCase().includes(search);
+      const matchesSeverity = severityFilter === 'all' || file.maxSeverity === severityFilter;
+      return matchesSearch && matchesSeverity;
+    });
+  }, [fileSearch, filesWithVulnerabilities, severityFilter]);
 
-      if (isFolder) {
-        return (
-          <div key={currentPath}>
-            <div 
-              className="flex items-center py-1 px-2 cursor-pointer hover:bg-slate-50 rounded"
-              onClick={() => {
-                const newExpanded = new Set(expandedFolders);
-                if (isExpanded) {
-                  newExpanded.delete(currentPath);
-                } else {
-                  newExpanded.add(currentPath);
-                }
-                setExpandedFolders(newExpanded);
-              }}
-            >
-              {isExpanded ? <ChevronDown className="h-4 w-4 mr-1" /> : <ChevronRight className="h-4 w-4 mr-1" />}
-              <Folder className="h-4 w-4 mr-2 text-slate-500" />
-              <span className="flex-1 truncate">{name}</span>
-            </div>
-            {isExpanded && (
-              <div className="ml-4">
-                {renderFileTree(value, currentPath)}
+  const fileTree = React.useMemo(() => buildFileTree(filteredFiles), [filteredFiles]);
+
+  const collectFolderPaths = (node: FileTreeNode, paths: Set<string>) => {
+    if (node.type !== 'folder') return;
+    Object.values(node.children).forEach(child => {
+      if (child.type === 'folder') {
+        paths.add(child.path);
+        collectFolderPaths(child, paths);
+      }
+    });
+  };
+
+  const expandAllFolders = () => {
+    const paths = new Set<string>();
+    collectFolderPaths(fileTree, paths);
+    setExpandedFolders(paths);
+  };
+
+  const collapseAllFolders = () => {
+    setExpandedFolders(new Set());
+  };
+
+  // Render as flat list
+  const renderFlatList = () => {
+    return filteredFiles.map(file => (
+      <div
+        key={file.path}
+        className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer hover:bg-slate-50 ${
+          selectedFilePath === file.path ? 'bg-slate-100' : ''
+        }`}
+        onClick={() => setSelectedFilePath(file.path)}
+        title={file.path}
+      >
+        <FileCode className="h-4 w-4 text-slate-500" />
+        <span className="flex-1 truncate text-sm" title={file.path}>
+          {file.path}
+        </span>
+        <span className={`h-2.5 w-2.5 rounded-full ${getSeverityDot(file.maxSeverity)}`} />
+        <span className="text-xs px-1.5 py-0.5 bg-red-100 text-red-800 rounded-full">
+          {file.vulnerabilityCount}
+        </span>
+      </div>
+    ));
+  };
+
+  const renderFileTree = (node: FileTreeNode) => {
+    if (node.type === 'folder') {
+      const children = Object.values(node.children).sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'folder' ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+
+      return children.map(child => {
+        if (child.type === 'folder') {
+          const isExpanded = expandedFolders.has(child.path);
+          return (
+            <div key={child.path}>
+              <div
+                className="flex items-center gap-2 py-1.5 px-2 rounded hover:bg-slate-50 cursor-pointer"
+                onClick={() => {
+                  const nextExpanded = new Set(expandedFolders);
+                  if (isExpanded) {
+                    nextExpanded.delete(child.path);
+                  } else {
+                    nextExpanded.add(child.path);
+                  }
+                  setExpandedFolders(nextExpanded);
+                }}
+                title={child.path}
+              >
+                {isExpanded ? (
+                  <ChevronDown className="h-4 w-4 text-slate-500" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-slate-500" />
+                )}
+                <Folder className="h-4 w-4 text-slate-500" />
+                <span className="flex-1 truncate text-sm">{child.name}</span>
+                <span className={`h-2.5 w-2.5 rounded-full ${getSeverityDot(child.maxSeverity)}`} />
+                <span className="text-xs text-slate-500">{child.fileCount}</span>
+                <span className="text-xs px-1.5 py-0.5 bg-red-100 text-red-800 rounded-full">
+                  {child.issueCount}
+                </span>
               </div>
-            )}
+              {isExpanded && (
+                <div className="ml-2">
+                  {renderFileTree(child)}
+                </div>
+              )}
+            </div>
+          );
+        }
+
+        return (
+          <div
+            key={child.path}
+            className={`flex items-center gap-2 py-1.5 px-2 rounded cursor-pointer hover:bg-slate-50 ${
+              selectedFilePath === child.path ? 'bg-slate-100' : ''
+            }`}
+            onClick={() => setSelectedFilePath(child.path)}
+            title={child.path}
+          >
+            <FileCode className="h-4 w-4 text-slate-500" />
+            <span className="flex-1 truncate text-sm">{child.name}</span>
+            <span className={`h-2.5 w-2.5 rounded-full ${getSeverityDot(child.maxSeverity)}`} />
+            <span className="text-xs px-1.5 py-0.5 bg-red-100 text-red-800 rounded-full">
+              {child.issueCount}
+            </span>
           </div>
         );
-      }
+      });
+    }
 
-      const file = value as FileWithVulnerabilities;
-      return (
-        <div
-          key={file.path}
-          className={`flex items-center py-1 px-2 cursor-pointer hover:bg-slate-50 rounded ${
-            selectedFilePath === file.path ? 'bg-slate-100' : ''
-          }`}
-          onClick={() => setSelectedFilePath(file.path)}
-        >
-          <FileCode className="h-4 w-4 mr-2 text-slate-500" />
-          <span className="flex-1 truncate">{name}</span>
-          <span className="ml-2 text-xs px-1.5 py-0.5 bg-red-100 text-red-800 rounded-full">
-            {file.vulnerabilityCount}
-          </span>
-        </div>
-      );
-    });
+    return null;
   };
 
   if (loading) return <div>Loading...</div>;
@@ -334,27 +525,160 @@ const ProjectDetail = () => {
                 {/* <Button variant="outline">
                   Download Report
                 </Button> */}
-                <Button>
-                  Rescan Project
+                <Button onClick={handleRescan} disabled={isRescanning}>
+                  {isRescanning ? 'Rescanning...' : 'Rescan Project'}
                 </Button>
               </div>
             </div>
             
+            {/* Sidebar Toggle Button - Mobile Only */}
+            <div className="lg:hidden mb-4">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="gap-2"
+              >
+                {sidebarOpen ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                {sidebarOpen ? 'Hide' : 'Show'} Files Panel
+              </Button>
+            </div>
+
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-              {/* File List Sidebar */}
-              <Card className="lg:col-span-1">
+              {/* Left Sidebar - Collapsible */}
+              <Card className={`lg:col-span-1 transition-all duration-300 ${
+                sidebarOpen ? 'block' : 'hidden lg:block'
+              }`}>
                 <CardContent className="p-4">
-                  <h3 className="font-semibold text-lg mb-4">Files with Issues</h3>
-                  <ScrollArea className="h-[calc(100vh-250px)]">
-                    {renderFileTree(buildFileTree(filesWithVulnerabilities))}
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="font-semibold text-lg">Files with Issues</h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500">{filteredFiles.length} files</span>
+                      <button
+                        onClick={() => setSidebarOpen(false)}
+                        className="lg:hidden p-1 hover:bg-slate-100 rounded"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 mb-3">
+                    <button
+                      onClick={() => setViewMode('tree')}
+                      className={`flex-1 text-xs px-2.5 py-1.5 rounded border transition ${
+                        viewMode === 'tree'
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}
+                      title="Tree view - hierarchical structure"
+                    >
+                      Tree
+                    </button>
+                    <button
+                      onClick={() => setViewMode('list')}
+                      className={`flex-1 text-xs px-2.5 py-1.5 rounded border transition ${
+                        viewMode === 'list'
+                          ? 'bg-slate-900 text-white border-slate-900'
+                          : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                      }`}
+                      title="List view - flat list with full paths"
+                    >
+                      List
+                    </button>
+                  </div>
+                  <div className="space-y-3">
+                    <Input
+                      value={fileSearch}
+                      onChange={(e) => setFileSearch(e.target.value)}
+                      placeholder="Search paths or filenames"
+                      className="h-9"
+                    />
+                    {viewMode === 'tree' && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="text-xs px-2.5 py-1 rounded-full border bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                          onClick={expandAllFolders}
+                        >
+                          Expand all
+                        </button>
+                        <button
+                          className="text-xs px-2.5 py-1 rounded-full border bg-white text-slate-600 border-slate-200 hover:border-slate-300"
+                          onClick={collapseAllFolders}
+                        >
+                          Collapse all
+                        </button>
+                      </div>
+                    )}
+                    <div className="flex flex-wrap gap-2">
+                      {(['all', 'critical', 'high', 'medium', 'low'] as SeverityFilter[]).map(filter => (
+                        <button
+                          key={filter}
+                          className={`text-xs px-2.5 py-1 rounded-full border transition ${
+                            severityFilter === filter
+                              ? 'bg-slate-900 text-white border-slate-900'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                          }`}
+                          onClick={() => setSeverityFilter(filter)}
+                        >
+                          {filter === 'all' ? 'All' : filter.charAt(0).toUpperCase() + filter.slice(1)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <ScrollArea className="h-[calc(100vh-380px)] mt-4">
+                    {filteredFiles.length === 0 ? (
+                      <div className="text-sm text-slate-500 py-6 text-center">
+                        No files match the current filter.
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        {viewMode === 'tree' ? renderFileTree(fileTree) : renderFlatList()}
+                      </div>
+                    )}
                   </ScrollArea>
                 </CardContent>
               </Card>
               
               {/* Main Content */}
-              <div className="lg:col-span-3">
+              <div className={`lg:col-span-3 transition-all duration-300 ${
+                sidebarOpen ? 'hidden lg:block' : 'block'
+              }`}>
                 <Card>
                   <CardContent className="p-6">
+                    <div className="flex flex-col gap-2 mb-6">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-2">
+                          <FileCode className="h-5 w-5 text-slate-500" />
+                          <span className="font-semibold text-lg">
+                            {selectedFile?.name || 'Select a file'}
+                          </span>
+                        </div>
+                        {selectedFile && (
+                          <span className="text-xs px-2 py-1 bg-red-100 text-red-800 rounded-full">
+                            {selectedFile.vulnerabilityCount} issues
+                          </span>
+                        )}
+                      </div>
+                      {selectedFile?.path && (
+                        <div className="flex items-center gap-1 text-xs text-slate-500 overflow-x-auto pb-1">
+                          {selectedFile.path.split('/').map((segment, idx, arr) => (
+                            <div key={idx} className="flex items-center gap-1 shrink-0">
+                              <span className="hover:text-slate-700 cursor-pointer" title={selectedFile.path}>
+                                {segment}
+                              </span>
+                              {idx < arr.length - 1 && (
+                                <ChevronRight className="h-3 w-3 text-slate-400" />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {!selectedFile && (
+                        <div className="text-xs text-slate-500">
+                          Pick a file from the tree to see details.
+                        </div>
+                      )}
+                    </div>
                     <Tabs defaultValue="issues">
                       <TabsList className="grid w-full grid-cols-4">
                         <TabsTrigger value="issues">Security Issues ({selectedFileVulnerabilities.length})</TabsTrigger>

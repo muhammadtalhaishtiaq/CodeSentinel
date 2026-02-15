@@ -4,6 +4,7 @@ const util = require('util');
 const AdmZip = require('adm-zip');
 const Project = require('../models/Project');
 const Scan = require('../models/Scan');
+const ScanRule = require('../models/ScanRule');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
 const crypto = require('crypto');
@@ -269,6 +270,72 @@ function getDirectory(structure, path) {
     return current;
 }
 
+// Helper function to fetch and format custom scan rules
+async function getCustomScanRulesForUser(userId) {
+    try {
+        const rules = await ScanRule.find({
+            user: userId,
+            active: true
+        });
+
+        if (!rules || rules.length === 0) {
+            return '';
+        }
+
+        // Separate master rule and custom rules
+        const masterRule = rules.find(r => r.isMasterRule);
+        const customRules = rules.filter(r => !r.isMasterRule);
+
+        let rulesText = '';
+
+        // Add master rule first if it exists and is active
+        if (masterRule) {
+            rulesText += '\n\n=== MASTER EVALUATION RULE (Comprehensive Code Quality Check) ===\n';
+            rulesText += `${masterRule.ruleDetails}\n`;
+            if (masterRule.checkFor && masterRule.checkFor.length > 0) {
+                rulesText += `\nKey patterns to check: ${masterRule.checkFor.join(', ')}\n`;
+            }
+            rulesText += '========================================\n';
+        }
+
+        // Add custom rules if any exist
+        if (customRules.length > 0) {
+            rulesText += '\n\n=== ADDITIONAL CUSTOM RULES ===\n';
+
+            const grouped = {};
+            customRules.forEach(rule => {
+                const cat = rule.category || 'general';
+                if (!grouped[cat]) grouped[cat] = [];
+                grouped[cat].push(rule);
+            });
+
+            Object.entries(grouped).forEach(([category, categoryRules]) => {
+                rulesText += `\n[${category.toUpperCase()}]\n`;
+                categoryRules.forEach(rule => {
+                    rulesText += `\n- ${rule.name}\n`;
+                    rulesText += `  ${rule.ruleDetails}\n`;
+                    if (rule.checkFor && rule.checkFor.length > 0) {
+                        rulesText += `  Check for: ${rule.checkFor.join(', ')}\n`;
+                    }
+                    if (rule.examples?.badCode) {
+                        rulesText += `  Bad example: ${rule.examples.badCode.substring(0, 100)}...\n`;
+                    }
+                    if (rule.examples?.goodCode) {
+                        rulesText += `  Good example: ${rule.examples.goodCode.substring(0, 100)}...\n`;
+                    }
+                });
+            });
+
+            rulesText += '\n========================================\n';
+        }
+
+        return rulesText;
+    } catch (error) {
+        console.error('[ERROR] Failed to fetch custom rules:', error.message);
+        return '';
+    }
+}
+
 // Update processScan function
 const processScan = async(scanId, projectId, branch, userId, pullRequestNumber = null) => {
     try {
@@ -292,14 +359,25 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
             throw new Error(`No active ${provider} credentials found`);
         }
 
-        // Emit initial status
-        try {
-            sharedEmitter.emit('scan-progress', { scanId, progress: 0, message: 'Initializing scan...' });
-        } catch (error) {
-            console.error(`[ERROR] Failed to emit initial progress for scanId ${scanId}:`, error);
-        }
+        const updateProgress = async (progress, message, extraFields = {}) => {
+            await Scan.findByIdAndUpdate(scanId, {
+                progress,
+                message,
+                ...extraFields
+            });
+            try {
+                sharedEmitter.emit('scan-progress', { scanId, progress, message });
+            } catch (error) {
+                console.error(`[ERROR] Failed to emit progress for scanId ${scanId}:`, error);
+            }
+        };
+
+        await updateProgress(0, 'Initializing scan...');
+        await updateProgress(5, 'Preparing scan...');
 
         let files = [];
+        let totalFilesToFetch = 0;
+        let fetchedFiles = 0;
 
         // ----- If PR number provided, scan ONLY PR files -----
         if (pullRequestNumber) {
@@ -332,39 +410,50 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                     changes: f.changes
                 })), null, 2));
                 
-                for (const file of prFiles) {
+                const prFilesToFetch = prFiles.filter((file) => file.status !== 'removed');
+                totalFilesToFetch = prFilesToFetch.length;
+                await updateProgress(15, `Found ${totalFilesToFetch} files. Fetching file contents...`, {
+                    totalFiles: totalFilesToFetch
+                });
+
+                for (const file of prFilesToFetch) {
                     console.log(`[DEBUG] Processing file: ${file.filename}, status: ${file.status}`);
                     
-                    if (file.status !== 'removed') {
-                        try {
-                            console.log(`[DEBUG] Fetching content for: ${file.filename} from ${file.raw_url}`);
-                            const fileResponse = await fetch(file.raw_url, {
-                                headers: {
-                                    'Authorization': `token ${token}`,
-                                    'Accept': 'application/vnd.github.v3.raw'
-                                },
-                                timeout: 60000
+                    try {
+                        console.log(`[DEBUG] Fetching content for: ${file.filename} from ${file.raw_url}`);
+                        const fileResponse = await fetch(file.raw_url, {
+                            headers: {
+                                'Authorization': `token ${token}`,
+                                'Accept': 'application/vnd.github.v3.raw'
+                            },
+                            timeout: 60000
+                        });
+                        if (fileResponse.ok) {
+                            const content = await fileResponse.text();
+                            console.log(`[DEBUG] ✅ Successfully fetched ${file.filename} (${content.length} chars, patch: ${file.patch?.length || 0} chars)`);
+                            files.push({ 
+                                path: file.filename, 
+                                content, 
+                                raw_url: file.raw_url,
+                                patch: file.patch,  // Diff of changes
+                                additions: file.additions,
+                                deletions: file.deletions,
+                                isPR: true  // Flag to indicate PR scanning
                             });
-                            if (fileResponse.ok) {
-                                const content = await fileResponse.text();
-                                console.log(`[DEBUG] ✅ Successfully fetched ${file.filename} (${content.length} chars, patch: ${file.patch?.length || 0} chars)`);
-                                files.push({ 
-                                    path: file.filename, 
-                                    content, 
-                                    raw_url: file.raw_url,
-                                    patch: file.patch,  // Diff of changes
-                                    additions: file.additions,
-                                    deletions: file.deletions,
-                                    isPR: true  // Flag to indicate PR scanning
-                                });
-                            } else {
-                                console.error(`[DEBUG] ❌ Failed to fetch ${file.filename}: HTTP ${fileResponse.status} ${fileResponse.statusText}`);
-                            }
-                        } catch (err) {
-                            console.error(`[DEBUG] ❌ Error fetching file ${file.filename}:`, err.message);
+                        } else {
+                            console.error(`[DEBUG] ❌ Failed to fetch ${file.filename}: HTTP ${fileResponse.status} ${fileResponse.statusText}`);
                         }
-                    } else {
-                        console.log(`[DEBUG] ⏭️ Skipping removed file: ${file.filename}`);
+                    } catch (err) {
+                        console.error(`[DEBUG] ❌ Error fetching file ${file.filename}:`, err.message);
+                    } finally {
+                        fetchedFiles += 1;
+                        if (totalFilesToFetch > 0) {
+                            const progress = Math.min(15 + Math.floor((fetchedFiles / totalFilesToFetch) * 20), 35);
+                            await updateProgress(progress, `Downloading files ${fetchedFiles}/${totalFilesToFetch}...`, {
+                                totalFiles: totalFilesToFetch,
+                                scannedFiles: fetchedFiles
+                            });
+                        }
                     }
                 }
                 
@@ -417,6 +506,10 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                     );
 
                     console.log(`[DEBUG] Filtered to ${prChangedFiles.length} changed files (blobs only, excluding removed)`);
+                    totalFilesToFetch = prChangedFiles.length;
+                    await updateProgress(15, `Found ${totalFilesToFetch} files. Fetching file contents...`, {
+                        totalFiles: totalFilesToFetch
+                    });
 
                     for (const change of prChangedFiles) {
                         try {
@@ -439,6 +532,15 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                             }
                         } catch (err) {
                             console.error(`[DEBUG] ❌ Error fetching Azure file ${change.item.path}:`, err.message);
+                        } finally {
+                            fetchedFiles += 1;
+                            if (totalFilesToFetch > 0) {
+                                const progress = Math.min(15 + Math.floor((fetchedFiles / totalFilesToFetch) * 20), 35);
+                                await updateProgress(progress, `Downloading files ${fetchedFiles}/${totalFilesToFetch}...`, {
+                                    totalFiles: totalFilesToFetch,
+                                    scannedFiles: fetchedFiles
+                                });
+                            }
                         }
                     }
                 }
@@ -466,6 +568,10 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
 
                 const diffStatData = await diffStatRes.json();
                 const prChangedFiles = (diffStatData.values || []).filter(f => f.status !== 'removed');
+                totalFilesToFetch = prChangedFiles.length;
+                await updateProgress(15, `Found ${totalFilesToFetch} files. Fetching file contents...`, {
+                    totalFiles: totalFilesToFetch
+                });
 
                 for (const file of prChangedFiles) {
                     const filePath = file.new ? file.new.path : (file.old ? file.old.path : null);
@@ -481,6 +587,15 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                         }
                     } catch (err) {
                         console.error(`Failed to fetch Bitbucket file ${filePath}:`, err.message);
+                    } finally {
+                        fetchedFiles += 1;
+                        if (totalFilesToFetch > 0) {
+                            const progress = Math.min(15 + Math.floor((fetchedFiles / totalFilesToFetch) * 20), 35);
+                            await updateProgress(progress, `Downloading files ${fetchedFiles}/${totalFilesToFetch}...`, {
+                                totalFiles: totalFilesToFetch,
+                                scannedFiles: fetchedFiles
+                            });
+                        }
                     }
                 }
             }
@@ -514,6 +629,11 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                 file.status === 'modified' || file.status === 'added'
             );
 
+            totalFilesToFetch = changedFiles.length;
+            await updateProgress(15, `Found ${totalFilesToFetch} files. Fetching file contents...`, {
+                totalFiles: totalFilesToFetch
+            });
+
             // Fetch content for each changed file
             for (const file of changedFiles) {
                 try {
@@ -530,6 +650,15 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                     }
                 } catch (err) {
                     console.error(`Failed to fetch file ${file.filename}:`, err.message);
+                } finally {
+                    fetchedFiles += 1;
+                    if (totalFilesToFetch > 0) {
+                        const progress = Math.min(15 + Math.floor((fetchedFiles / totalFilesToFetch) * 20), 35);
+                        await updateProgress(progress, `Downloading files ${fetchedFiles}/${totalFilesToFetch}...`, {
+                            totalFiles: totalFilesToFetch,
+                            scannedFiles: fetchedFiles
+                        });
+                    }
                 }
             }
 
@@ -564,6 +693,11 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                         (c.changeType === 'edit' || c.changeType === 'add')
                     );
 
+                    totalFilesToFetch = changedFiles.length;
+                    await updateProgress(15, `Found ${totalFilesToFetch} files. Fetching file contents...`, {
+                        totalFiles: totalFilesToFetch
+                    });
+
                     for (const change of changedFiles) {
                         try {
                             const fileRes = await fetch(
@@ -576,6 +710,15 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                             }
                         } catch (err) {
                             console.error(`Failed to fetch Azure file ${change.item.path}:`, err.message);
+                        } finally {
+                            fetchedFiles += 1;
+                            if (totalFilesToFetch > 0) {
+                                const progress = Math.min(15 + Math.floor((fetchedFiles / totalFilesToFetch) * 20), 35);
+                                await updateProgress(progress, `Downloading files ${fetchedFiles}/${totalFilesToFetch}...`, {
+                                    totalFiles: totalFilesToFetch,
+                                    scannedFiles: fetchedFiles
+                                });
+                            }
                         }
                     }
                 }
@@ -604,6 +747,11 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                 f.status !== 'removed'
             );
 
+            totalFilesToFetch = changedFiles.length;
+            await updateProgress(15, `Found ${totalFilesToFetch} files. Fetching file contents...`, {
+                totalFiles: totalFilesToFetch
+            });
+
             for (const file of changedFiles) {
                 const filePath = file.new ? file.new.path : (file.old ? file.old.path : null);
                 if (!filePath) continue;
@@ -618,6 +766,15 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
                     }
                 } catch (err) {
                     console.error(`Failed to fetch Bitbucket file ${filePath}:`, err.message);
+                } finally {
+                    fetchedFiles += 1;
+                    if (totalFilesToFetch > 0) {
+                        const progress = Math.min(15 + Math.floor((fetchedFiles / totalFilesToFetch) * 20), 35);
+                        await updateProgress(progress, `Downloading files ${fetchedFiles}/${totalFilesToFetch}...`, {
+                            totalFiles: totalFilesToFetch,
+                            scannedFiles: fetchedFiles
+                        });
+                    }
                 }
             }
         }
@@ -662,17 +819,13 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
             return;
         }
 
-        // Update scan with total files and emit progress (25%)
-        await Scan.findByIdAndUpdate(scanId, {
+        await updateProgress(35, 'Analyzing files with AI...', {
             totalFiles,
-            progress: 25,
-            message: 'Scanning files...'
+            scannedFiles: 0
         });
-        try {
-            sharedEmitter.emit('scan-progress', { scanId, progress: 25, message: 'Scanning files...' });
-        } catch (error) {
-            console.error(`[ERROR] Failed to emit 25% progress for scanId ${scanId}:`, error);
-        }
+
+        // Fetch custom scan rules for this user
+        const customRulesText = await getCustomScanRulesForUser(userId);
 
         let scannedFiles = 0;
         let allVulnerabilities = [];
@@ -683,24 +836,24 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
 
         const CONCURRENT_BATCHES = 3; // Process 3 batches concurrently
         
+        let completedBatches = 0;
         for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
             const currentBatches = batches.slice(i, i + CONCURRENT_BATCHES);
             
             // Process batches in parallel
             const batchResults = await Promise.all(
-                currentBatches.map(batch => scanBatch(batch, pullRequestNumber ? true : false))
+                currentBatches.map(batch => scanBatch(batch, pullRequestNumber ? true : false, customRulesText))
             );
 
             // Aggregate results
             for (const batchVulns of batchResults) {
                 allVulnerabilities = allVulnerabilities.concat(batchVulns);
                 scannedFiles += batchVulns.filesScanned || 1;
-                
-                const currentProgress = Math.min(25 + Math.floor((scannedFiles / totalFiles) * 50), 75);
-                await Scan.findByIdAndUpdate(scanId, {
-                    scannedFiles,
-                    progress: currentProgress,
-                    message: `Scanned ${scannedFiles} of ${totalFiles} files...`
+                completedBatches += 1;
+
+                const currentProgress = Math.min(35 + Math.floor((completedBatches / Math.max(batches.length, 1)) * 60), 95);
+                await updateProgress(currentProgress, `Analyzing files ${scannedFiles}/${totalFiles}...`, {
+                    scannedFiles
                 });
             }
         }
@@ -816,14 +969,14 @@ function createSmartBatches(files, isPRScan) {
 }
 
 // **NEW: Scan a batch of files with single AI call**
-async function scanBatch(batch, isPRScan) {
+async function scanBatch(batch, isPRScan, customRulesText = '') {
     try {
         if (batch.length === 1) {
             // Single file - use existing logic
             const file = batch[0];
             const file_extension = file.path.split('.').pop();
             const contentToScan = isPRScan && file.patch ? file.patch : file.content;
-            const vulns = await scanFile(contentToScan, file.path, file_extension, isPRScan);
+            const vulns = await scanFile(contentToScan, file.path, file_extension, isPRScan, customRulesText);
             vulns.filesScanned = 1;
             return vulns;
         }
@@ -852,7 +1005,7 @@ async function scanBatch(batch, isPRScan) {
         FILES TO ANALYZE:
         ${filesContent}
         
-        Focus on: SQL injection, XSS, CSRF, insecure auth, input validation, cryptography, data exposure, dependencies, and code quality issues.
+        ${customRulesText}
         
         For each issue found, return a JSON object with: type, severity (low/medium/high/critical), description, location (file path), lineNumber, file_extension, file_name, file_path, original_code, suggested_code, potential_impact, potential_risk, potential_solution, potential_mitigation, potential_prevention, potential_detection.
         
@@ -861,6 +1014,9 @@ async function scanBatch(batch, isPRScan) {
 
         // API call with configurable model from environment variable
         const aiModel = process.env.AIML_MODEL;
+        if (!aiModel) {
+            throw new Error('AIML_MODEL is not set. Please set AIML_MODEL in your .env file.');
+        }
         const response = await axios({
             method: 'post',
             url: 'https://api.aimlapi.com/v1/chat/completions',
@@ -891,16 +1047,24 @@ async function scanBatch(batch, isPRScan) {
         return vulnerabilities;
         
     } catch (error) {
+        if (error.response) {
+            console.error('[ERROR] Batch AIML API error:', {
+                status: error.response.status,
+                statusText: error.response.statusText,
+                data: error.response.data,
+                model: process.env.AIML_MODEL
+            });
+        }
         console.error(`[ERROR] Error scanning batch:`, error.message);
         return { filesScanned: batch.length };
     }
 }
 
 //2nd call for file scanning in which we are calling LLM for analysis
-const scanFile = async(content, fileName, file_extension, isPRScan = false) => {
+const scanFile = async(content, fileName, file_extension, isPRScan = false, customRulesText = '') => {
     try {
         const vulnerabilities = [];
-        const analysisResults = await analyzeCodeWithLLM(content, fileName, file_extension, isPRScan);
+        const analysisResults = await analyzeCodeWithLLM(content, fileName, file_extension, isPRScan, customRulesText);
         vulnerabilities.push(...analysisResults);
         return vulnerabilities;
     } catch (error) {
@@ -910,7 +1074,7 @@ const scanFile = async(content, fileName, file_extension, isPRScan = false) => {
 };
 
 // Analyze code with Claude 3.7 Sonnet via AIML API
-async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = false) {
+async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = false, customRulesText = '') {
     try {
         if (!process.env.AIMLAPI_KEY) {
             console.error('[ERROR] AIMLAPI_KEY environment variable is not set');
@@ -932,10 +1096,27 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
         const language = getLanguageFromExtension('.' + file_extension);
         const codeType = isPRScan ? 'DIFF/PATCH (changed lines only)' : 'full file code';
 
+        // Calculate approximate token count (1 token ≈ 4 characters)
+        const basePromptLength = 800; // Approximate length of base prompt
+        const codeLength = code.length;
+        const rulesLength = customRulesText.length;
+        const totalChars = basePromptLength + codeLength + rulesLength;
+        const estimatedTokens = Math.ceil(totalChars / 4);
+        
+        // Model token limits (keeping buffer for response)
+        const maxInputTokens = 15000; // Conservative limit for most models
+        
+        // If prompt would be too large, skip custom rules to stay within token limits
+        let finalRulesText = customRulesText;
+        if (estimatedTokens > maxInputTokens) {
+            console.log(`[WARN] Prompt too large (${estimatedTokens} tokens). Skipping custom rules for ${fileName}`);
+            finalRulesText = '';
+        }
+
         const prompt = `
         You are a security expert code reviewer. Analyze the following ${language} ${codeType} for security vulnerabilities and quality issues.
         
-        ${isPRScan ? '⚠️ PR SCAN MODE: This is a diff/patch showing ONLY changed lines. Focus your analysis on the changes (lines marked with + or -). Ignore context lines unless they directly relate to the vulnerability.' : ''}
+        ${isPRScan ? 'PR SCAN MODE: This is a diff/patch showing ONLY changed lines. Focus your analysis on the changes (lines marked with + or -). Ignore context lines unless they directly relate to the vulnerability.' : ''}
         
         File: ${fileName}
         
@@ -944,7 +1125,7 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
         ${code}
         \`\`\`
         
-        Focus on: SQL injection, XSS, CSRF, insecure auth, input validation, cryptography, data exposure, dependencies, and code quality issues.
+        ${finalRulesText}
         
         For each issue found, return a JSON object with: type, severity (low/medium/high/critical), description, location, lineNumber, file_extension, file_name, file_path, original_code, suggested_code, potential_impact, potential_risk, potential_solution, potential_mitigation, potential_prevention, potential_detection.
         
@@ -955,6 +1136,10 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
         let response = null;
         const maxRetries = 2;
         const aiModel = process.env.AIML_MODEL;  // Set in .env file
+
+        if (!aiModel) {
+            throw new Error('AIML_MODEL is not set. Please set AIML_MODEL in your .env file.');
+        }
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
@@ -976,6 +1161,18 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
                 });
                 break; // Success — exit retry loop
             } catch (apiError) {
+                if (apiError.response) {
+                    console.error('[ERROR] AIML API error:', {
+                        status: apiError.response.status,
+                        statusText: apiError.response.statusText,
+                        data: apiError.response.data,
+                        fieldErrors: apiError.response.data?.meta?.fieldErrors,
+                        model: aiModel,
+                        fileName,
+                        promptLength: prompt.length,
+                        estimatedTokens: Math.ceil(prompt.length / 4)
+                    });
+                }
                 console.error(`[ERROR] API call failed (attempt ${attempt}/${maxRetries}) for ${fileName}:`, apiError.message);
                 if (attempt >= maxRetries) throw apiError;
                 await new Promise(resolve => setTimeout(resolve, 2000 * attempt));

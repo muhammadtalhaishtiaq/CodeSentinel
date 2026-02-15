@@ -19,6 +19,7 @@ const authRoutes = require('./routes/auth');
 const integrationRoutes = require('./routes/integration');
 const projectRoutes = require('./routes/project');
 const scanRoutes = require('./routes/scan');
+const scanRulesRoutes = require('./routes/scanRules');
 const oauthRoutes = require('./routes/oauth');
 const dashboardRoutes = require('./routes/dashboard');
 
@@ -74,6 +75,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/integrations', integrationRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/scans', scanRoutes);
+app.use('/api/scan-rules', scanRulesRoutes);
 app.use('/api/oauth', oauthRoutes);
 
 // Serve static files in production

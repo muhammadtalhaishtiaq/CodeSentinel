@@ -18,6 +18,10 @@ import MyProjects from "./pages/MyProjects";
 import ApiIntegrations from "./pages/ApiIntegrations";
 import NotFound from "./pages/NotFound";
 import Products from "./pages/Products";
+import CodeSecurityProduct from "./pages/CodeSecurityProduct";
+import ContainerSecurityProduct from "./pages/ContainerSecurityProduct";
+import IaCSecurityProduct from "./pages/IaCSecurityProduct";
+import CloudSecurityProduct from "./pages/CloudSecurityProduct";
 import Platform from "./pages/Platform";
 import Developers from "./pages/Developers";
 import Pricing from "./pages/Pricing";
@@ -83,6 +87,10 @@ const App = () => (
             
             {/* Public Routes */}
             <Route path="/products" element={<Products />} />
+            <Route path="/products/code-security" element={<CodeSecurityProduct />} />
+            <Route path="/products/container-security" element={<ContainerSecurityProduct />} />
+            <Route path="/products/iac-security" element={<IaCSecurityProduct />} />
+            <Route path="/products/cloud-security" element={<CloudSecurityProduct />} />
             <Route path="/platform" element={<Platform />} />
             <Route path="/developers" element={<Developers />} />
             <Route path="/pricing" element={<Pricing />} />

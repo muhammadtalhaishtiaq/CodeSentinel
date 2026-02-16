@@ -67,7 +67,8 @@ exports.sendMessage = async(req, res) => {
         const aiResponse = await analyzeWithLLM({
             content,
             project,
-            scan: project.latestScan
+            scan: project.latestScan,
+            userId: req.user._id
         });
 
         // Create AI message

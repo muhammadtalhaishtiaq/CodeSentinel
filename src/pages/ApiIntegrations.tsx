@@ -44,6 +44,7 @@ const ApiIntegrations = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
   const [syncingProvider, setSyncingProvider] = useState<string | null>(null);
+  const oauthPopupRef = React.useRef<Window | null>(null);
   
   // Repository management state
   const [repositories, setRepositories] = useState<any[]>([]);
@@ -103,12 +104,22 @@ const ApiIntegrations = () => {
           description: `${provider.charAt(0).toUpperCase() + provider.slice(1)} connected successfully!`,
         });
         fetchOAuthStatus();
+        // Close popup from parent window
+        if (oauthPopupRef.current && !oauthPopupRef.current.closed) {
+          oauthPopupRef.current.close();
+          oauthPopupRef.current = null;
+        }
       } else if (type === 'oauth-error') {
         toast({
           title: 'Connection Failed',
           description: `Failed to connect: ${error?.replace(/_/g, ' ') || 'Unknown error'}`,
           variant: 'destructive',
         });
+        // Close popup from parent window
+        if (oauthPopupRef.current && !oauthPopupRef.current.closed) {
+          oauthPopupRef.current.close();
+          oauthPopupRef.current = null;
+        }
       }
     };
 
@@ -145,28 +156,24 @@ const ApiIntegrations = () => {
     try {
       setConnectingProvider(provider);
       
-      // Get token from localStorage
-      const token = localStorage.getItem('token');
-      if (!token) {
-        throw new Error('Authentication token missing. Please log in again.');
+      const response = await authenticatedRequest(`/api/oauth/${provider}/connect`);
+      if (!response?.success || !response?.data?.authUrl) {
+        throw new Error('Failed to get OAuth authorization URL');
       }
-      
-      // TODO: Security improvement — the JWT token is passed in the URL query string so the
-      // backend `protect` middleware can authenticate this browser-navigated request. The token
-      // is only sent to our own backend (never forwarded to external OAuth providers), but
-      // passing tokens in URLs is not ideal because they can appear in server logs, browser
-      // history, and referrer headers. Consider moving to a short-lived, HttpOnly cookie-based
-      // session approach for OAuth popup authentication.
+
       const width = 600;
       const height = 700;
       const left = window.screen.width / 2 - width / 2;
       const top = window.screen.height / 2 - height / 2;
       
-      window.open(
-        `/api/oauth/${provider}/connect?token=${encodeURIComponent(token)}`,
+      const popup = window.open(
+        response.data.authUrl,
         'OAuth',
         `width=${width},height=${height},left=${left},top=${top}`
       );
+      
+      // Store popup reference so we can close it from parent window
+      oauthPopupRef.current = popup;
     } catch (error: any) {
       toast({
         title: 'Connection Failed',
@@ -383,19 +390,19 @@ const ApiIntegrations = () => {
       accentColor: 'border-blue-500',
       status: oauthStatus.azure
     },
-    // {
-    //   id: 'bitbucket',
-    //   name: 'Bitbucket',
-    //   description: 'Connect Bitbucket to analyze your team repositories',
-    //   icon: () => (
-    //     <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
-    //       <path d="M.778 1.213a.768.768 0 00-.768.892l3.263 19.81c.084.5.515.868 1.022.873H19.95a.772.772 0 00.77-.646l3.27-20.03a.768.768 0 00-.768-.891zM14.52 15.528H9.522L8.17 8.464h7.561z"/>
-    //     </svg>
-    //   ),
-    //   color: 'from-blue-700 to-blue-900',
-    //   accentColor: 'border-blue-600',
-    //   status: oauthStatus.bitbucket
-    // }
+    {
+      id: 'bitbucket',
+      name: 'Bitbucket',
+      description: 'Connect Bitbucket to analyze your team repositories',
+      icon: () => (
+        <svg className="w-8 h-8" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M.778 1.213a.768.768 0 00-.768.892l3.263 19.81c.084.5.515.868 1.022.873H19.95a.772.772 0 00.77-.646l3.27-20.03a.768.768 0 00-.768-.891zM14.52 15.528H9.522L8.17 8.464h7.561z"/>
+        </svg>
+      ),
+      color: 'from-blue-700 to-blue-900',
+      accentColor: 'border-blue-600',
+      status: oauthStatus.bitbucket
+    }
   ];
 
   if (isLoading) {

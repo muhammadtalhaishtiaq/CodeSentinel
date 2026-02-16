@@ -62,7 +62,7 @@ exports.initiateGitHubOAuth = async (req, res, next) => {
         const redirectUri = process.env.GITHUB_CALLBACK_URL;
         const state = Buffer.from(JSON.stringify({ userId: req.user._id })).toString('base64');
 
-        const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=repo,user:email&state=${state}`;
+        const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=public_repo,read:user,user:email&state=${state}`;
 
         res.status(200).json({
             success: true,
@@ -80,23 +80,12 @@ exports.initiateGitHubOAuth = async (req, res, next) => {
 exports.handleGitHubCallback = async (req, res, next) => {
     try {
         const { code, state } = req.query;
+        console.log('Received GitHub OAuth callback with code:', code);
+        console.log('Received state:', state);
+        const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
 
         if (!code) {
-            return res.send(`
-                <html>
-                    <body>
-                        <script>
-                            if (window.opener) {
-                                window.opener.postMessage({ type: 'oauth-error', provider: 'github', error: 'no_code' }, '${process.env.FRONTEND_URL}');
-                                window.close();
-                            } else {
-                                window.location.href = '${process.env.FRONTEND_URL}/api-integrations?error=no_code';
-                            }
-                        </script>
-                        <p>Error occurred. Closing...</p>
-                    </body>
-                </html>
-            `);
+            return res.send(`<html><head><title>Error</title></head><body onload="try{if(window.opener){window.opener.postMessage({type:'oauth-error',provider:'github',error:'no_code'},'*');}}catch(e){console.error(e)}"><p>Error: No authorization code. You can close this window.</p></body></html>`);
         }
 
         // Decode state to get userId
@@ -114,23 +103,10 @@ exports.handleGitHubCallback = async (req, res, next) => {
         });
 
         const accessToken = tokenResponse.data.access_token;
+        console.log('GitHub access token received:', accessToken ? 'Yes' : 'No');
 
         if (!accessToken) {
-            return res.send(`
-                <html>
-                    <body>
-                        <script>
-                            if (window.opener) {
-                                window.opener.postMessage({ type: 'oauth-error', provider: 'github', error: 'no_token' }, '${process.env.FRONTEND_URL}');
-                                window.close();
-                            } else {
-                                window.location.href = '${process.env.FRONTEND_URL}/api-integrations?error=no_token';
-                            }
-                        </script>
-                        <p>Error occurred. Closing...</p>
-                    </body>
-                </html>
-            `);
+            return res.send(`<html><head><title>Error</title></head><body onload="try{if(window.opener){window.opener.postMessage({type:'oauth-error',provider:'github',error:'no_token'},'*');}}catch(e){console.error(e)}"><p>Error: Failed to get access token. You can close this window.</p></body></html>`);
         }
 
         // Fetch user info from GitHub
@@ -142,6 +118,7 @@ exports.handleGitHubCallback = async (req, res, next) => {
         });
 
         const githubUser = userResponse.data;
+        console.log('GitHub user info retrieved:', githubUser ? githubUser.login : 'No user info');
 
         // Save or update credentials
         let credential = await SourceCredential.findOne({
@@ -169,39 +146,14 @@ exports.handleGitHubCallback = async (req, res, next) => {
             });
         }
 
-        // Send HTML that closes popup and notifies parent
-        res.send(`
-            <html>
-                <body>
-                    <script>
-                        if (window.opener) {
-                            window.opener.postMessage({ type: 'oauth-success', provider: 'github' }, '${process.env.FRONTEND_URL}');
-                            window.close();
-                        } else {
-                            window.location.href = '${process.env.FRONTEND_URL}/api-integrations?success=github';
-                        }
-                    </script>
-                    <p>Redirecting...</p>
-                </body>
-            </html>
-        `);
+        console.log('Credentials saved : ', credential ? 'Yes' : 'No');
+
+        // Send success response with postMessage only
+        const origin = frontendUrl.replace(/\/$/, ''); // Remove trailing slash
+        return res.send(`<html><head><title>Success</title></head><body onload="try{if(window.opener){console.log('Sending success message to parent');window.opener.postMessage({type:'oauth-success',provider:'github'},'${origin}');}}catch(e){console.error('postMessage error:',e)}"><p>Authorization successful. You can close this window.</p></body></html>`);
     } catch (error) {
         console.error('Error in GitHub OAuth callback:', error);
-        res.send(`
-            <html>
-                <body>
-                    <script>
-                        if (window.opener) {
-                            window.opener.postMessage({ type: 'oauth-error', provider: 'github', error: 'callback_failed' }, '${process.env.FRONTEND_URL}');
-                            window.close();
-                        } else {
-                            window.location.href = '${process.env.FRONTEND_URL}/api-integrations?error=callback_failed';
-                        }
-                    </script>
-                    <p>Connection failed. Closing...</p>
-                </body>
-            </html>
-        `);
+        return res.send(`<html><head><title>Error</title></head><body onload="try{if(window.opener){window.opener.postMessage({type:'oauth-error',provider:'github',error:'callback_failed'},'*');}}catch(e){console.error(e)}"><p>Error processing callback. You can close this window.</p></body></html>`);
     }
 };
 

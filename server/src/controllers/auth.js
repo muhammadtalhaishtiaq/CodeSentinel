@@ -1,6 +1,8 @@
 const User = require('../models/User');
+const ScanRule = require('../models/ScanRule');
 const { generateToken } = require('../utils/jwtUtils');
 const sendEmail = require('../utils/emailUtils');
+const getResetPasswordEmailTemplate = require('../templates/resetPasswordEmail');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 
@@ -27,6 +29,106 @@ exports.register = async(req, res, next) => {
             email,
             password
         });
+
+        // Create master rule for new user (comprehensive evaluation)
+        const masterRuleContent = `COMPREHENSIVE CODE EVALUATION - 22 Point Assessment
+
+Evaluate code against the following 9 categories covering all aspects of quality, security, and best practices:
+
+CATEGORY 1: CODE QUALITY (3 points)
+- Naming conventions followed (variables, functions, classes have clear, descriptive names)
+- Modular structure (code is well-organized, DRY principle followed, proper separation of concerns)
+- No dead code (no unused variables, functions, imports, or commented-out code blocks)
+
+CATEGORY 2: FUNCTIONALITY (3 points)
+- Requirements met (code implements business logic correctly and completely)
+- Error handling present (exceptions caught properly, edge cases handled gracefully)
+- Edge cases covered (null checks, boundary conditions, failure scenarios considered)
+
+CATEGORY 3: SECURITY (3 points)
+- No hardcoded secrets (no passwords, API keys, tokens, credentials in source code)
+- Input validation (all user inputs sanitized, SQL injection prevention, XSS prevention)
+- Authentication and Authorization (proper access control, permission checks implemented)
+
+CATEGORY 4: PERFORMANCE (3 points)
+- Optimized logic (no unnecessary loops, efficient algorithms, minimal complexity)
+- Caching strategies (Redis, in-memory cache, browser cache where applicable)
+- Database queries optimized (no N+1 queries, proper indexing, efficient joins, eager loading)
+
+CATEGORY 5: TESTING (2 points)
+- Unit and Integration tests written (positive cases, negative cases, edge cases)
+- Test coverage adequate (critical paths tested, proper use of mocks and stubs)
+
+CATEGORY 6: CODING STANDARDS (2 points)
+- Language standards followed (consistent formatting, idiomatic code for the language)
+- Static analysis passes (no linting errors, proper type hints, clean code metrics)
+
+CATEGORY 7: DEPENDENCIES (2 points)
+- No outdated packages (dependencies are current or recent versions)
+- Security vulnerabilities absent (no known CVEs in dependencies, secure packages)
+
+CATEGORY 8: DOCUMENTATION (2 points)
+- Code documented (meaningful comments, complex logic explained clearly)
+- API and README updated (changes reflected in documentation, clear usage examples)
+
+CATEGORY 9: UI/UX (2 points)
+- Design compliance (matches specifications, responsive design, mobile-friendly)
+- User experience optimized (intuitive interface, accessible, no breaking changes)
+
+SEVERITY LEVELS:
+CRITICAL (0-11 points): Major security vulnerabilities, data exposure risks, critical bugs
+HIGH (12-15 points): Performance bottlenecks, missing error handling, architectural issues
+MEDIUM (16-19 points): Code quality issues, incomplete tests, documentation gaps
+LOW (20-22 points): Minor improvements, small optimizations, style consistency
+
+PATTERNS TO CHECK FOR:
+Security: hardcoded credentials, password, secret, api_key, token, private_key, access_token
+Queries: query in loop, N+1 problem, missing indexes, inefficient joins
+Quality: unused imports, dead code, commented code, console.log, print statements
+Testing: missing tests, no error handling, unhandled exceptions
+Validation: missing input validation, no sanitization, XSS vulnerabilities, SQL injection risks
+`;
+        
+        try {
+            await ScanRule.create({
+                user: user._id,
+                name: 'Comprehensive Code Evaluation',
+                description: 'Complete evaluation of code quality, security, performance, testing, standards, dependencies, documentation, and UX across all programming languages',
+                severity: 'critical',
+                languages: ['javascript', 'typescript', 'python', 'php', 'java', 'csharp', 'cpp', 'go', 'rust', 'ruby', 'sql', 'html', 'css', 'kotlin', 'swift'],
+                checkFor: ['security', 'quality', 'performance', 'testing', 'standards', 'dependencies', 'documentation', 'ux'],
+                ruleDetails: masterRuleContent,
+                category: 'security',
+                active: true,
+                isDefault: false,
+                ruleType: 'master',
+                isMasterRule: true,
+                // examples: {
+                //     badCode: 'password = "admin123"\nfor user in users:\n    posts = db.query("SELECT * FROM posts WHERE user_id = " + user.id)',
+                //     goodCode: 'password = os.environ.get("DB_PASSWORD")\nusers_with_posts = db.query("SELECT * FROM users LEFT JOIN posts ON users.id = posts.user_id")'
+                // }
+            });
+        } catch (ruleError) {
+            console.error('Error creating master rule:', ruleError);
+            // Continue even if master rule creation fails
+        }
+
+        // Create shared AIML config for new user (required for PR scanning and tracking)
+        try {
+            const LLMConfig = require('../models/LLMConfig');
+            await LLMConfig.create({
+                userId: user._id,
+                provider: 'aiml',
+                displayName: 'AIML (Shared)',
+                isDefault: true,
+                isActive: true
+                // No API key needed - uses environment shared key
+            });
+            console.log(`[INFO] Created shared AIML config for user ${user._id}`);
+        } catch (llmError) {
+            console.error('Error creating shared AIML config:', llmError);
+            // Continue even if LLM config creation fails
+        }
 
         // Generate JWT token
         const token = generateToken(user._id);
@@ -139,20 +241,18 @@ exports.forgotPassword = async(req, res, next) => {
         // Create reset URL
         const resetUrl = `${process.env.BASE_URL}/reset-password/${resetToken}`;
         
-        // Create message
-        const message = `
-                <h1>Password Reset</h1>
-                <p>You requested a password reset</p>
-                <p>Click the link below to reset your password:</p>
-                <a href="${resetUrl}" target="_blank">Reset Password</a>
-                <p>If you didn't request this, please ignore this email.</p>
-                `;
+        // Create professional HTML email
+        const htmlEmail = getResetPasswordEmailTemplate(resetUrl, user.name);
 
-        try {
+        console.log(`Password reset link for ${email}: ${resetUrl}`); // Log the reset URL for testing purposes
+        console.log(`Reset email content:\n${htmlEmail}`); // Log the email content for testing purposes
+
+        try { 
             await sendEmail({
                 email: user.email,
-                subject: 'Password reset token',
-                message
+                subject: 'Reset Your CodeSentinel Password',
+                message: `Reset your password by visiting: ${resetUrl}`,
+                html: htmlEmail
             });
 
             res.status(200).json({

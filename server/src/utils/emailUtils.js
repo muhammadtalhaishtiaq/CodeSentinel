@@ -1,6 +1,7 @@
 /**
  * Email Utility - Uses nodemailer for sending emails.
  * Falls back to console logging in development mode.
+ * Supports both SMTP_ and EMAIL_ environment variables.
  */
 
 const nodemailer = require('nodemailer');
@@ -11,6 +12,7 @@ const nodemailer = require('nodemailer');
  * In development without SMTP config, logs to console.
  */
 const createTransporter = () => {
+    // Option 1: Custom SMTP configuration (SMTP_ variables)
     if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
         return nodemailer.createTransport({
             host: process.env.SMTP_HOST,
@@ -22,6 +24,18 @@ const createTransporter = () => {
             }
         });
     }
+    
+    // Option 2: Gmail configuration (EMAIL_ variables)
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+        return nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS
+            }
+        });
+    }
+    
     return null;
 };
 
@@ -39,7 +53,7 @@ const sendEmail = async (options) => {
     }
 
     const mailOptions = {
-        from: process.env.SMTP_FROM || `"CodeSentinel" <${process.env.SMTP_USER}>`,
+        from: process.env.SMTP_FROM || process.env.EMAIL_FROM || `"CodeSentinel" <${process.env.SMTP_USER || process.env.EMAIL_USER}>`,
         to: options.email,
         subject: options.subject,
         text: options.message,

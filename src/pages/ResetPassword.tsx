@@ -18,6 +18,7 @@ const ResetPassword = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isValidating, setIsValidating] = useState(true);
   const [error, setError] = useState('');
+  const [formError, setFormError] = useState('');
   const [success, setSuccess] = useState('');
   
   const { resettoken } = useParams();
@@ -60,17 +61,23 @@ const ResetPassword = () => {
     
     // Validate password
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setFormError('Passwords do not match');
       return;
     }
 
     if (password.length < 6) {
-      setError('Password must be at least 6 characters');
+      setFormError('Password must be at least 6 characters');
+      return;
+    }
+
+    const passwordPolicy = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{6,}$/;
+    if (!passwordPolicy.test(password)) {
+      setFormError('Use at least 6 characters with an uppercase letter, a lowercase letter, a number, and a symbol.');
       return;
     }
 
     setIsSubmitting(true);
-    setError('');
+    setFormError('');
     setSuccess('');
 
     try {
@@ -98,7 +105,7 @@ const ResetPassword = () => {
         navigate('/dashboard');
       }, 2000);
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Failed to reset password');
+      setFormError(error instanceof Error ? error.message : 'Failed to reset password');
     } finally {
       setIsSubmitting(false);
     }
@@ -135,6 +142,11 @@ const ResetPassword = () => {
             {error && (
               <Alert variant="destructive" className="mb-4">
                 <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+            {formError && !error && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertDescription>{formError}</AlertDescription>
               </Alert>
             )}
             {success && (

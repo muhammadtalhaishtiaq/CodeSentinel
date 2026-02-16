@@ -20,6 +20,9 @@ export const authenticatedRequest = async (
   url: string, 
   options: RequestOptions = {}
 ) => {
+  const apiBaseUrl = import.meta.env.VITE_API_URL || '';
+  const requestUrl = url.startsWith('http') ? url : `${apiBaseUrl}${url}`;
+
   // Get token from localStorage
   const token = localStorage.getItem('token');
   
@@ -39,9 +42,9 @@ export const authenticatedRequest = async (
     body: options.body
   };
   
-  console.log(`Making ${requestOptions.method} request to ${url} with auth token`);
+  console.log(`Making ${requestOptions.method} request to ${requestUrl} with auth token`);
   
-  const response = await fetch(url, requestOptions);
+  const response = await fetch(requestUrl, requestOptions);
   const responseData = await response.json();
   
   if (!response.ok) {

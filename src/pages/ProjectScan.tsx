@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import SecurityScanProgress from '@/components/SecurityScanProgress';
 import Sidebar from '@/components/Sidebar';
+import { buildApiUrl } from '@/utils/apiBase';
 
 interface ScanStatus {
   status: 'in-progress' | 'completed' | 'failed';
@@ -43,7 +44,7 @@ const ProjectScan: React.FC = () => {
 
     const pollInterval = setInterval(async () => {
       try {
-        const response = await fetch(`/api/scans/${scanId}/status`, {
+        const response = await fetch(buildApiUrl(`/api/scans/${scanId}/status`), {
           headers: {
             'Authorization': `Bearer ${token}`
           }

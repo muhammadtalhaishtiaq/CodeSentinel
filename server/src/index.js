@@ -22,6 +22,7 @@ const scanRoutes = require('./routes/scan');
 const scanRulesRoutes = require('./routes/scanRules');
 const oauthRoutes = require('./routes/oauth');
 const dashboardRoutes = require('./routes/dashboard');
+const llmConfigRoutes = require('./routes/llmConfig');
 
 const app = express();
 
@@ -77,6 +78,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/scans', scanRoutes);
 app.use('/api/scan-rules', scanRulesRoutes);
 app.use('/api/oauth', oauthRoutes);
+app.use('/api/llm-config', llmConfigRoutes);
 
 // Serve static files in production
 if (config.env === 'production') {

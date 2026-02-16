@@ -348,6 +348,32 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
         const provider = project.repository.provider || 'github';
         console.log(`[SCAN] Processing ${pullRequestNumber ? 'PR #' + pullRequestNumber : 'branch ' + branch} for ${provider}`);
 
+        // Ensure user has shared AIML config (required for tracking)
+        try {
+            const LLMConfig = require('../models/LLMConfig');
+            let SharedAIMLConfig = await LLMConfig.findOne({
+                userId,
+                provider: 'aiml',
+                isActive: true
+            });
+
+            // Create if missing (safety net for edge cases)
+            if (!SharedAIMLConfig) {
+                console.log(`[INFO] Creating missing shared AIML config for user ${userId} during scan`);
+                SharedAIMLConfig = await LLMConfig.create({
+                    userId,
+                    provider: 'aiml',
+                    displayName: 'AIML (Shared)',
+                    isDefault: true,
+                    isActive: true
+                });
+                console.log(`[INFO] Shared AIML config created for PR scan tracking`);
+            }
+        } catch (llmError) {
+            console.warn(`[WARN] Could not ensure shared AIML config:`, llmError.message);
+            // Continue anyway - fallback will handle it
+        }
+
         // Get user's credentials for the correct provider
         const credential = await SourceCredential.findOne({
             user: userId,
@@ -824,6 +850,69 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
             scannedFiles: 0
         });
 
+        // ⚠️ REQUIRED: Validate LLM config before processing files
+        console.log(`[DEBUG] Validating LLM configuration for user ${userId}...`);
+        const LLMConfig = require('../models/LLMConfig');
+        
+        let userLLMConfig = await LLMConfig.findOne({
+            userId,
+            provider: 'aiml',
+            isActive: true
+        });
+
+        if (!userLLMConfig) {
+            console.log(`[DEBUG] No AIML config found, creating one for user ${userId}...`);
+            userLLMConfig = await LLMConfig.create({
+                userId,
+                provider: 'aiml',
+                displayName: 'AIML (Shared)',
+                isDefault: true,
+                isActive: true
+            });
+        }
+
+        //add a check here if provider is aiml, dont check encrypedapikey, check from env only because that shared, for othe rproviders we wil get suers encrypted key
+        if(userLLMConfig.provider === 'aiml') {
+             // For AIML provider, rely solely on environment variable for API key
+            if (!process.env.AIML_API_KEY) {    
+                const errorMsg = 'AIML API Key not configured. Please set AIML_API_KEY environment variable.';
+                console.error(`[ERROR] ${errorMsg}`);
+                await Scan.findByIdAndUpdate(scanId, {
+                    status: 'failed',
+                    progress: 50,
+                    message: errorMsg,
+                    error: errorMsg,
+                    completedAt: Date.now()
+                });
+                throw new Error(errorMsg);
+            }
+        }
+        // Check if API key is available (either in config or environment)
+        const hasConfigKey = userLLMConfig.encryptedApiKey ? true : false;
+        const hasEnvKey = !!process.env.AIML_API_KEY;
+
+        console.log(`[DEBUG] LLM Config validation:`, {
+            hasConfigKey,
+            hasEnvKey,
+            provider: userLLMConfig.provider,
+            displayName: userLLMConfig.displayName
+        });
+
+        if (!hasConfigKey && !hasEnvKey) {
+            const errorMsg = 'AIML API Key not configured. Please add an API key in Settings > LLM Config or set AIML_API_KEY environment variable.';
+            console.error(`[ERROR] ${errorMsg}`);
+            await Scan.findByIdAndUpdate(scanId, {
+                status: 'failed',
+                progress: 50,
+                message: errorMsg,
+                error: errorMsg,
+                completedAt: Date.now()
+            });
+            throw new Error(errorMsg);
+        }
+
+        console.log(`[DEBUG] ✅ LLM configuration validated successfully`);
+
         // Fetch custom scan rules for this user
         const customRulesText = await getCustomScanRulesForUser(userId);
 
@@ -842,7 +931,7 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
             
             // Process batches in parallel
             const batchResults = await Promise.all(
-                currentBatches.map(batch => scanBatch(batch, pullRequestNumber ? true : false, customRulesText))
+                currentBatches.map(batch => scanBatch(batch, pullRequestNumber ? true : false, customRulesText, userId))
             );
 
             // Aggregate results
@@ -898,6 +987,25 @@ const processScan = async(scanId, projectId, branch, userId, pullRequestNumber =
 
         // Update scan with results
         await Scan.findByIdAndUpdate(scanId, finalResult);
+
+        // Track usage: Increment counter for the AIML config used
+        try {
+            const LLMConfig = require('../models/LLMConfig');
+            await LLMConfig.findOneAndUpdate(
+                {
+                    userId,
+                    provider: 'aiml',
+                    isActive: true
+                },
+                {
+                    $inc: { totalRequests: 1 }
+                }
+            );
+            console.log(`[SCAN] Incremented AIML usage counter for user ${userId}`);
+        } catch (trackError) {
+            console.warn(`[WARN] Could not track AIML usage:`, trackError.message);
+            // Continue anyway - this is non-critical
+        }
 
         // Emit completion
         try {
@@ -969,14 +1077,14 @@ function createSmartBatches(files, isPRScan) {
 }
 
 // **NEW: Scan a batch of files with single AI call**
-async function scanBatch(batch, isPRScan, customRulesText = '') {
+async function scanBatch(batch, isPRScan, customRulesText = '', userId = null) {
     try {
         if (batch.length === 1) {
             // Single file - use existing logic
             const file = batch[0];
             const file_extension = file.path.split('.').pop();
             const contentToScan = isPRScan && file.patch ? file.patch : file.content;
-            const vulns = await scanFile(contentToScan, file.path, file_extension, isPRScan, customRulesText);
+            const vulns = await scanFile(contentToScan, file.path, file_extension, isPRScan, customRulesText, userId);
             vulns.filesScanned = 1;
             return vulns;
         }
@@ -1061,10 +1169,10 @@ async function scanBatch(batch, isPRScan, customRulesText = '') {
 }
 
 //2nd call for file scanning in which we are calling LLM for analysis
-const scanFile = async(content, fileName, file_extension, isPRScan = false, customRulesText = '') => {
+const scanFile = async(content, fileName, file_extension, isPRScan = false, customRulesText = '', userId = null) => {
     try {
         const vulnerabilities = [];
-        const analysisResults = await analyzeCodeWithLLM(content, fileName, file_extension, isPRScan, customRulesText);
+        const analysisResults = await analyzeCodeWithLLM(content, fileName, file_extension, isPRScan, customRulesText, userId);
         vulnerabilities.push(...analysisResults);
         return vulnerabilities;
     } catch (error) {
@@ -1073,24 +1181,47 @@ const scanFile = async(content, fileName, file_extension, isPRScan = false, cust
     }
 };
 
-// Analyze code with Claude 3.7 Sonnet via AIML API
-async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = false, customRulesText = '') {
+// Analyze code with LLM (supports multiple providers via adapter)
+async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = false, customRulesText = '', userId = null) {
     try {
-        if (!process.env.AIMLAPI_KEY) {
-            console.error('[ERROR] AIMLAPI_KEY environment variable is not set');
-            if (process.env.NODE_ENV === 'development') {
-                return [{
-                    type: "Mock Vulnerability",
-                    severity: "medium",
-                    description: "This is a mock vulnerability for testing. AIMLAPI_KEY is not set.",
-                    location: fileName,
-                    lineNumber: 1,
-                    file_path: fileName,
-                    file_name: fileName.split('/').pop(),
-                    file_extension: file_extension
-                }];
+        const LLMConfig = require('../models/LLMConfig');
+        const LLMAdapter = require('../utils/llmAdapter');
+
+        // Get user's LLM config if userId provided
+        let llmConfig = null;
+        if (userId) {
+            // First try to get default LLM config
+            llmConfig = await LLMConfig.findOne({
+                userId,
+                isDefault: true,
+                isActive: true
+            });
+
+            // If no default, ensure user has shared AIML (create if missing)
+            if (!llmConfig) {
+                llmConfig = await LLMConfig.findOne({
+                    userId,
+                    provider: 'aiml',
+                    isActive: true
+                });
+
+                // If still no shared AIML, create it (safety net for migrated users)
+                if (!llmConfig) {
+                    console.log(`[WARN] Creating missing shared AIML config for user ${userId}`);
+                    llmConfig = await LLMConfig.create({
+                        userId,
+                        provider: 'aiml',
+                        displayName: 'AIML (Shared)',
+                        isDefault: true,
+                        isActive: true
+                    });
+                }
             }
-            return [];
+        }
+
+        // Fallback to direct AIML API if no config or no userId
+        if (!llmConfig) {
+            return await analyzeCodeWithAIML(code, fileName, file_extension, isPRScan, customRulesText);
         }
 
         const language = getLanguageFromExtension('.' + file_extension);
@@ -1132,24 +1263,110 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
         If no issues are found, return an empty array. Only return the JSON array with no other text.
         `;
 
-        // API call with retry
+        try {
+            // Use LLM Adapter
+            const adapter = new LLMAdapter(llmConfig);
+            const result = await adapter.generateCompletion(prompt, {
+                temperature: 0.1,
+                maxTokens: 4000,
+                systemPrompt: 'You are an expert security code reviewer. Respond in JSON format.'
+            });
+
+            // Parse response
+            const content = result.response.trim();
+            try {
+                const match = content.match(/\[[\s\S]*\]/);
+                const jsonStr = match ? match[0] : content;
+                const vulnerabilities = JSON.parse(jsonStr);
+
+                return vulnerabilities.filter(v =>
+                    v && v.type && v.severity && v.description && ['low', 'medium', 'high', 'critical'].includes(v.severity)
+                );
+            } catch (parseError) {
+                console.error(`[ERROR] Failed to parse LLM response for ${fileName}:`, parseError.message);
+                return [];
+            }
+        } catch (adapterError) {
+            console.error(`[ERROR] LLM Adapter error for ${fileName}:`, adapterError.message);
+            // Fallback to direct AIML
+            return await analyzeCodeWithAIML(code, fileName, file_extension, isPRScan, customRulesText);
+        }
+    } catch (error) {
+        console.error(`[ERROR] Error analyzing code with LLM for ${fileName}:`, error.message);
+        return [];
+    }
+}
+
+// Fallback: Analyze code with shared AIML API directly
+async function analyzeCodeWithAIML(code, fileName, file_extension, isPRScan = false, customRulesText = '') {
+    try {
+        if (!process.env.AIML_API_KEY) {
+            console.error('[ERROR] AIML_API_KEY environment variable is not set');
+            if (process.env.NODE_ENV === 'development') {
+                return [{
+                    type: "Mock Vulnerability",
+                    severity: "medium",
+                    description: "This is a mock vulnerability for testing. AIML_API_KEY is not set.",
+                    location: fileName,
+                    lineNumber: 1,
+                    file_path: fileName,
+                    file_name: fileName.split('/').pop(),
+                    file_extension: file_extension
+                }];
+            }
+            return [];
+        }
+
+        const language = getLanguageFromExtension('.' + file_extension);
+        const codeType = isPRScan ? 'DIFF/PATCH (changed lines only)' : 'full file code';
+
+        // Calculate approximate token count (1 token ≈ 4 characters)
+        const basePromptLength = 800;
+        const codeLength = code.length;
+        const rulesLength = customRulesText.length;
+        const totalChars = basePromptLength + codeLength + rulesLength;
+        const estimatedTokens = Math.ceil(totalChars / 4);
+        
+        const maxInputTokens = 15000;
+        
+        let finalRulesText = customRulesText;
+        if (estimatedTokens > maxInputTokens) {
+            console.log(`[WARN] Prompt too large (${estimatedTokens} tokens). Skipping custom rules for ${fileName}`);
+            finalRulesText = '';
+        }
+
+        const prompt = `
+        You are a security expert code reviewer. Analyze the following ${language} ${codeType} for security vulnerabilities and quality issues.
+        
+        ${isPRScan ? 'PR SCAN MODE: This is a diff/patch showing ONLY changed lines. Focus your analysis on the changes (lines marked with + or -). Ignore context lines unless they directly relate to the vulnerability.' : ''}
+        
+        File: ${fileName}
+        
+        CODE:
+        \`\`\`${language}
+        ${code}
+        \`\`\`
+        
+        ${finalRulesText}
+        
+        For each issue found, return a JSON object with: type, severity (low/medium/high/critical), description, location, lineNumber, file_extension, file_name, file_path, original_code, suggested_code, potential_impact, potential_risk, potential_solution, potential_mitigation, potential_prevention, potential_detection.
+        
+        If no issues are found, return an empty array. Only return the JSON array with no other text.
+        `;
+
+        const aiModel = process.env.AIML_MODEL || 'AIML/model';
+
         let response = null;
         const maxRetries = 2;
-        const aiModel = process.env.AIML_MODEL;  // Set in .env file
-
-        if (!aiModel) {
-            throw new Error('AIML_MODEL is not set. Please set AIML_MODEL in your .env file.');
-        }
 
         for (let attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 response = await axios({
                     method: 'post',
-                    url: 'https://api.aimlapi.com/v1/chat/completions',
+                    url: 'https://api.aiml.ai/v1/chat/completions',
                     headers: {
-                        'Authorization': `Bearer ${process.env.AIMLAPI_KEY}`,
-                        'Content-Type': 'application/json',
-                        'Accept': '*/*'
+                        'Authorization': `Bearer ${process.env.AIML_API_KEY}`,
+                        'Content-Type': 'application/json'
                     },
                     data: {
                         model: aiModel,
@@ -1159,18 +1376,13 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
                     },
                     timeout: 60000
                 });
-                break; // Success — exit retry loop
+                break;
             } catch (apiError) {
                 if (apiError.response) {
                     console.error('[ERROR] AIML API error:', {
                         status: apiError.response.status,
                         statusText: apiError.response.statusText,
-                        data: apiError.response.data,
-                        fieldErrors: apiError.response.data?.meta?.fieldErrors,
-                        model: aiModel,
-                        fileName,
-                        promptLength: prompt.length,
-                        estimatedTokens: Math.ceil(prompt.length / 4)
+                        data: apiError.response.data
                     });
                 }
                 console.error(`[ERROR] API call failed (attempt ${attempt}/${maxRetries}) for ${fileName}:`, apiError.message);
@@ -1183,7 +1395,6 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
             throw new Error('Failed to get response from API after retries');
         }
 
-        // Extract and parse vulnerabilities from response
         const content = response.data.choices[0].message.content.trim();
 
         try {
@@ -1195,11 +1406,11 @@ async function analyzeCodeWithLLM(code, fileName, file_extension, isPRScan = fal
                 v && v.type && v.severity && v.description && ['low', 'medium', 'high', 'critical'].includes(v.severity)
             );
         } catch (parseError) {
-            console.error(`[ERROR] Failed to parse LLM response for ${fileName}:`, parseError.message);
+            console.error(`[ERROR] Failed to parse AIML response for ${fileName}:`, parseError.message);
             return [];
         }
     } catch (error) {
-        console.error(`[ERROR] Error analyzing code with LLM for ${fileName}:`, error.message);
+        console.error(`[ERROR] Error analyzing code with AIML for ${fileName}:`, error.message);
         return [];
     }
 }

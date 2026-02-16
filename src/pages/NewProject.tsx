@@ -73,11 +73,29 @@ const NewProject = () => {
   const [isLoadingPRs, setIsLoadingPRs] = useState(false);
   const [prFilesData, setPrFilesData] = useState<PRFilesData | null>(null);
   const [isLoadingPRFiles, setIsLoadingPRFiles] = useState(false);
+  const [hasLLMConfig, setHasLLMConfig] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
   
   // Filter to only enabled repositories
   const enabledRepositories = repositories.filter(repo => repo.isEnabled === true);
+  
+  // Check if user has LLM config on component mount
+  useEffect(() => {
+    const checkLLMConfig = async () => {
+      try {
+        const response = await authenticatedRequest('/api/llm-config/check');
+        if (response?.success) {
+          setHasLLMConfig(response.data.hasConfig || false);
+        }
+      } catch (error) {
+        console.error('Error checking LLM config:', error);
+        setHasLLMConfig(false);
+      }
+    };
+
+    checkLLMConfig();
+  }, []);
   
   // Fetch repositories on component mount
   useEffect(() => {
@@ -449,6 +467,22 @@ const NewProject = () => {
           <div className="container mx-auto max-w-4xl">
             <h1 className="text-3xl font-bold mb-8">New Security Scan</h1>
             
+            {!hasLLMConfig && (
+              <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-700 rounded-md">
+                <p className="text-red-700 font-medium mb-2">
+                  <b>No LLM Key Added</b>
+                </p>
+                <p className="text-red-700 text-sm mb-3">
+                  You must configure an LLM API key before starting scans.&nbsp;&nbsp;
+                
+                <button
+                  onClick={() => navigate('/settings')}
+                  className="text-red-700 underline hover:text-red-900 text-sm font-medium" >
+                  Go to Settings → LLM Configuration
+                </button></p>
+              </div>
+            )}
+            
             <Tabs defaultValue="repository">
               {/* <TabsList className="grid w-full grid-cols-2 mb-8">
                 <TabsTrigger value="repository" className="text-lg py-3">
@@ -490,6 +524,7 @@ const NewProject = () => {
                           <Label htmlFor="repository">Select Repository</Label>
                           <Select
                             id="repository"
+                            isDisabled={!hasLLMConfig} // Disable search if no LLM config, since there won't be many repos
                             value={selectedRepo}
                             onChange={(newValue) => setSelectedRepo(newValue as RepositoryOption)}
                             options={enabledRepositories.map(repo => ({
@@ -540,11 +575,11 @@ const NewProject = () => {
                         </h4>
                         <div className="text-sm text-green-700 space-y-1">
                           <p><strong>{prFilesData.totalFiles}</strong> files changed</p>
-                          <p className="text-xs">
+                          {/* <p className="text-xs">
                             <span className="text-green-600">+{prFilesData.totalAdditions} additions</span>
                             {' / '}
                             <span className="text-red-600">-{prFilesData.totalDeletions} deletions</span>
-                          </p>
+                          </p> */}
                           {prFilesData.files.length > 0 && (
                             <details className="mt-2">
                               <summary className="cursor-pointer text-xs text-green-600 hover:text-green-800">
@@ -599,7 +634,8 @@ const NewProject = () => {
                     <Button 
                       type="submit" 
                       className="w-full"
-                      disabled={!selectedRepo || !selectedPR || !projectName.trim() || isLoadingPRFiles || !prFilesData}
+                      disabled={!selectedRepo || !selectedPR || !projectName.trim() || isLoadingPRFiles || !prFilesData || !hasLLMConfig}
+                      title={!hasLLMConfig ? "Please configure an LLM API key first" : ""}
                     >
                       Start Security Scan
                     </Button>

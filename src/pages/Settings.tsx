@@ -6,6 +6,8 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Sidebar from '@/components/Sidebar';
+import ScanRulesSettings from '@/components/ScanRulesSettings';
+import LLMConfigSettings from '@/components/LLMConfigSettings';
 import { useAuth } from '@/contexts/AuthContext';
 import { Eye, EyeOff } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
@@ -158,6 +160,8 @@ const Settings = () => {
                 <TabsTrigger value="profile">Profile</TabsTrigger>
                 {/* <TabsTrigger value="security">Security</TabsTrigger> */}
                 <TabsTrigger value="notifications">Notifications</TabsTrigger>
+                <TabsTrigger value="scan-rules">Scan Rules</TabsTrigger>
+                <TabsTrigger value="llm-config">LLM Config</TabsTrigger>
               </TabsList>
               
               <TabsContent value="profile" className="mt-6">
@@ -328,6 +332,14 @@ const Settings = () => {
                     </p>
                   </CardContent>
                 </Card>
+              </TabsContent>
+
+              <TabsContent value="scan-rules" className="mt-6">
+                <ScanRulesSettings />
+              </TabsContent>
+
+              <TabsContent value="llm-config" className="mt-6">
+                <LLMConfigSettings />
               </TabsContent>
             </Tabs>
           </div>

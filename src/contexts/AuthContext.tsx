@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { buildApiUrl } from '@/utils/apiBase';
 
 interface User {
   id: string;
@@ -80,7 +81,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
       
       // Verify token with backend
-      const response = await fetch('/api/auth/me', {
+      const response = await fetch(buildApiUrl('/api/auth/me'), {
         headers: {
           Authorization: `Bearer ${token}`
         }

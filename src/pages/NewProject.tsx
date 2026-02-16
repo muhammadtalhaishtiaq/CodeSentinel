@@ -9,6 +9,7 @@ import { toast } from '@/components/ui/use-toast';
 import Sidebar from '@/components/Sidebar';
 import { Upload, Github } from 'lucide-react';
 import { authenticatedRequest } from '@/utils/authUtils';
+import { buildApiUrl } from '@/utils/apiBase';
 import Select from 'react-select';
 import axios from 'axios';
 import { useToast } from '@/hooks/use-toast';
@@ -388,7 +389,7 @@ const NewProject = () => {
       });
 
       // Create project with PR files data
-      const response = await axios.post('/api/projects', {
+      const response = await axios.post(buildApiUrl('/api/projects'), {
         name: projectName,
         description: description,
         repositoryId: selectedRepo.value,
@@ -410,7 +411,7 @@ const NewProject = () => {
 
       // Start scan
       console.log('[DEBUG] Starting scan for project:', response.data.data._id);
-      const scanResponse = await axios.post(`/api/projects/${response.data.data._id}/start-scan`, {
+      const scanResponse = await axios.post(buildApiUrl(`/api/projects/${response.data.data._id}/start-scan`), {
         branch: selectedPR.branch,
         pullRequestNumber: selectedPR.value
       }, {

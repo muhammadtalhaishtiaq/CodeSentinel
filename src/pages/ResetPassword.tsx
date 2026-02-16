@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { buildApiUrl } from '@/utils/apiBase';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
@@ -29,7 +30,7 @@ const ResetPassword = () => {
   useEffect(() => {
     const validateToken = async () => {
       try {
-        const response = await fetch(`/api/auth/validate-reset-token/${resettoken}`);
+        const response = await fetch(buildApiUrl(`/api/auth/validate-reset-token/${resettoken}`));
         const data = await response.json();
         
         if (!response.ok) {
@@ -81,7 +82,7 @@ const ResetPassword = () => {
     setSuccess('');
 
     try {
-      const response = await fetch(`/api/auth/resetpassword/${resettoken}`, {
+      const response = await fetch(buildApiUrl(`/api/auth/resetpassword/${resettoken}`), {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

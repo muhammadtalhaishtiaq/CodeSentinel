@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { buildApiUrl } from '@/utils/apiBase';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
@@ -64,7 +65,7 @@ const Register = () => {
     setError('');
 
     try {
-      const response = await fetch('/api/auth/register', {
+      const response = await fetch(buildApiUrl('/api/auth/register'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { buildApiUrl } from '@/utils/apiBase';
 import Header from '@/components/Header';
 import Footer from '@/components/Footer';
 
@@ -21,7 +22,7 @@ const ForgotPassword = () => {
     setSuccess('');
 
     try {
-      const response = await fetch('/api/auth/forgotpassword', {
+      const response = await fetch(buildApiUrl('/api/auth/forgotpassword'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

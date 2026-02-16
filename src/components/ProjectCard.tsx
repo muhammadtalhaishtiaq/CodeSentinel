@@ -50,16 +50,18 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
   };
   
   return (
-    <Link to={`/project/${id}`}>
+    <Link to={`/projects/${id}`}>
       <Card className="hover-card-animation">
         <CardHeader className="pb-2">
-          <div className="flex justify-between items-start">
-            <CardTitle className="text-xl">{name}</CardTitle>
-            <span className={cn(getBadgeClass())}>{getStatusText()}</span>
+          <div className="flex items-start justify-between gap-2 min-w-0">
+            <CardTitle className="text-xl font-semibold break-words min-w-0 flex-1">
+              {name}
+            </CardTitle>
+            <span className={cn(getBadgeClass(), "shrink-0")}>{getStatusText()}</span>
           </div>
         </CardHeader>
         <CardContent>
-          <p className="text-slate-600 mb-4">{description}</p>
+          <p className="text-slate-600 mb-4 break-words">{description}</p>
           <div className="flex justify-between items-center text-sm text-slate-500">
             <span>Last scanned: {lastScanned}</span>
             <span className="font-medium">{issuesCount} issue{issuesCount !== 1 ? 's' : ''}</span>

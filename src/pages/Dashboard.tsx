@@ -80,12 +80,12 @@ const Dashboard = () => {
   }, []);
 
   return (
-    <SidebarProvider>
-      <div className="flex h-screen bg-gray-50">
+    <SidebarProvider className="overflow-x-hidden">
+      <div className="flex h-screen w-full bg-gray-50 overflow-x-hidden">
         <Sidebar />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <main className="flex-1 overflow-y-auto p-6">
-            <div className="container mx-auto">
+        <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
+          <main className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden p-6">
+            <div className="max-w-7xl mx-auto w-full">
               <div className="flex justify-between items-center mb-8">
                 <h1 className="text-2xl md:text-3xl font-bold">Dashboard</h1>
                 <Link to="/new-project">

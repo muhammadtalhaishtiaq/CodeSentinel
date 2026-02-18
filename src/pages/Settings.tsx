@@ -159,7 +159,7 @@ const Settings = () => {
               <TabsList>
                 <TabsTrigger value="profile">Profile</TabsTrigger>
                 {/* <TabsTrigger value="security">Security</TabsTrigger> */}
-                <TabsTrigger value="notifications">Notifications</TabsTrigger>
+                {/* <TabsTrigger value="notifications">Notifications</TabsTrigger> */}
                 <TabsTrigger value="scan-rules">Scan Rules</TabsTrigger>
                 <TabsTrigger value="llm-config">LLM Config</TabsTrigger>
               </TabsList>

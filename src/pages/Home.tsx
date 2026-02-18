@@ -311,16 +311,16 @@ const Home = () => {
                 <div className="text-slate-600">Languages Supported</div>
               </div>
               <div className="text-center">
-                <div className="text-4xl font-bold text-indigo-600 mb-2">5s</div>
-                <div className="text-slate-600">Average Scan Time</div>
+                <div className="text-4xl font-bold text-indigo-600 mb-2">AI</div>
+                <div className="text-slate-600">Fix Guidance</div>
               </div>
               <div className="text-center">
-                <div className="text-4xl font-bold text-indigo-600 mb-2">95%</div>
-                <div className="text-slate-600">More Affordable</div>
+                <div className="text-4xl font-bold text-indigo-600 mb-2">GitHub</div>
+                <div className="text-slate-600">Integration</div>
               </div>
               <div className="text-center">
-                <div className="text-4xl font-bold text-indigo-600 mb-2">24/7</div>
-                <div className="text-slate-600">Security Monitoring</div>
+                <div className="text-4xl font-bold text-indigo-600 mb-2">Encrypted</div>
+                <div className="text-slate-600">Credentials</div>
               </div>
             </div>
 

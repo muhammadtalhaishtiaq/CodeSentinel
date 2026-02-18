@@ -36,14 +36,15 @@ const Developers = () => {
               </p>
             </div>
 
-            <div className="bg-slate-900 rounded-xl p-8 max-w-4xl mx-auto">
-              <div className="flex items-center gap-2 mb-4">
+            <div className="bg-gradient-to-br from-slate-950 to-slate-900 rounded-xl p-8 max-w-4xl mx-auto border border-slate-800 shadow-xl overflow-hidden">
+              <div className="flex items-center gap-2 mb-6">
                 <div className="w-3 h-3 rounded-full bg-red-500"></div>
                 <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
                 <div className="w-3 h-3 rounded-full bg-green-500"></div>
-                <span className="ml-4 text-slate-400 text-sm">Quick Start Example</span>
+                <span className="ml-4 text-slate-300 text-sm font-medium">Quick Start Example</span>
               </div>
-              <pre className="text-green-400 text-sm overflow-x-auto"><code>{`# Scan a GitHub repository
+              <div className="overflow-x-auto">
+                <pre className="text-emerald-200 text-sm font-mono whitespace-pre-wrap break-words"><code className="bg-transparent">{`# Scan a GitHub repository
 curl -X POST https://api.codesentinel.io/v1/scans \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
@@ -58,6 +59,7 @@ curl -X POST https://api.codesentinel.io/v1/scans \
   "status": "processing",
   "estimated_time": "5s"
 }`}</code></pre>
+              </div>
             </div>
           </div>
         </section>

@@ -79,6 +79,9 @@ const Dashboard = () => {
     fetchDashboard();
   }, []);
 
+  const visibleProjects = projects.slice(0, 8);
+  const visibleActivity = recentActivity.slice(0, 6);
+
   return (
     <SidebarProvider className="overflow-x-hidden">
       <div className="flex h-screen w-full bg-gray-50 overflow-x-hidden">
@@ -141,7 +144,12 @@ const Dashboard = () => {
 
                   {/* Projects Section */}
                   <div className="mb-8">
-                    <h2 className="text-xl font-semibold mb-4">Your Projects</h2>
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-xl font-semibold">Your Projects</h2>
+                      <Link to="/projects" className="text-sm font-medium text-indigo-600 hover:text-indigo-700">
+                        View All Projects
+                      </Link>
+                    </div>
                     {projects.length === 0 ? (
                       <div className="bg-white rounded-lg shadow p-8 text-center">
                         <ShieldCheck className="h-12 w-12 text-slate-300 mx-auto mb-3" />
@@ -154,8 +162,8 @@ const Dashboard = () => {
                         </Link>
                       </div>
                     ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        {projects.map(project => (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        {visibleProjects.map(project => (
                           <ProjectCard key={project.id} {...project} />
                         ))}
                       </div>
@@ -170,7 +178,7 @@ const Dashboard = () => {
                         <p className="text-slate-500 text-center py-4">No recent activity. Run a scan to see results here.</p>
                       ) : (
                         <div className="space-y-4">
-                          {recentActivity.map(activity => (
+                          {visibleActivity.map(activity => (
                             <div key={activity.id} className="flex items-start">
                               <div className={`h-10 w-10 rounded-full flex items-center justify-center mr-3 ${
                                 activity.type === 'vulnerability'

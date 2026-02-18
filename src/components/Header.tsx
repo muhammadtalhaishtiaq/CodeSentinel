@@ -47,14 +47,30 @@ const Header: React.FC = () => {
                 <NavigationMenuItem>
                   <NavigationMenuTrigger>Products</NavigationMenuTrigger>
                   <NavigationMenuContent>
-                    <div className="grid gap-3 p-6 w-[400px]">
+                    <div className="grid grid-cols-2 gap-3 p-6 w-[520px]">
                       <Link to="/products/code-security" className="block p-3 hover:bg-slate-50 rounded-lg">
                         <h3 className="text-sm font-semibold">Code Security</h3>
-                        <p className="text-sm text-gray-500">Find and fix vulnerabilities in your code</p>
+                        <p className="text-sm text-gray-500">SAST scanning for 14+ languages</p>
+                      </Link>
+                      <Link to="/products" className="block p-3 hover:bg-slate-50 rounded-lg">
+                        <h3 className="text-sm font-semibold">Dependency Scanner</h3>
+                        <p className="text-sm text-gray-500">SCA planned for Q2 2026</p>
+                      </Link>
+                      <Link to="/products/container-security" className="block p-3 hover:bg-slate-50 rounded-lg">
+                        <h3 className="text-sm font-semibold">Container Security</h3>
+                        <p className="text-sm text-gray-500">Image and Dockerfile scanning</p>
+                      </Link>
+                      <Link to="/products/iac-security" className="block p-3 hover:bg-slate-50 rounded-lg">
+                        <h3 className="text-sm font-semibold">IaC Security</h3>
+                        <p className="text-sm text-gray-500">Terraform and K8s checks</p>
                       </Link>
                       <Link to="/products/cloud-security" className="block p-3 hover:bg-slate-50 rounded-lg">
                         <h3 className="text-sm font-semibold">Cloud Security</h3>
-                        <p className="text-sm text-gray-500">Secure your cloud infrastructure</p>
+                        <p className="text-sm text-gray-500">CSPM roadmap coverage</p>
+                      </Link>
+                      <Link to="/developers" className="block p-3 hover:bg-slate-50 rounded-lg">
+                        <h3 className="text-sm font-semibold">IDE Extensions</h3>
+                        <p className="text-sm text-gray-500">VS Code + IntelliJ (Q4 2026)</p>
                       </Link>
                     </div>
                   </NavigationMenuContent>
